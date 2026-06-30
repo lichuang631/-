@@ -8,8 +8,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "chrome_path": "",
     "debug_port": 9222,
     "grab": {
-        "max_retries": 3,
-        "retry_interval_ms": 500,
+        "max_retries": 40,
+        "retry_interval_ms": 50,
         "poll_interval_ms": 50,
         "confirm_timeout_ms": 5000,
     },

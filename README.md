@@ -28,7 +28,7 @@
 
 - Python 3.9+ / PyQt6（GUI）
 - Playwright（桌面端浏览器自动化，通过 CDP 协议连接）
-- playwright-stealth（反检测）
+- 内联 JS 反检测（去自动化指纹，无第三方依赖）
 - uiautomator2（移动端 Android 设备控制）
 - ntplib（NTP 时间同步）
 
@@ -133,6 +133,16 @@ macOS 用户也可以直接双击 `start.command`。
 | `mobile.confirm_clicks` | 移动端确认订单坐标连点次数 |
 | `mobile.advance_seconds` | 提前开始点击的秒数 |
 
+## 反检测说明
+
+本工具的核心是「人工登录 + 人工选好 + 程序在开票瞬间帮你点击」，连接的是你自己登录的真实浏览器/手机，账号行为均由真人产生，并非传统意义上的爬虫。为降低被风控误判、保护账号，做了以下处理：
+
+- **桌面端去自动化指纹**：启动 Chrome 时带 `--disable-blink-features=AutomationControlled`，消除最明显的 `navigator.webdriver` 标志。
+- **stealth 注入双途径**：`core/stealth.py` 用内联 JS 抹掉常见自动化特征（`chrome.runtime`、`navigator.languages`、`plugins` 等）。既通过 `add_init_script` 覆盖「点击购买后跳转的订单页」，也对当前已加载页面立即 `evaluate` 打补丁。
+- **移动端随机抖动**：连点间隔加 ±30% 抖动、坐标落点加 ±6 像素偏移，避免完美的机械节奏被标记，也更像真人操作。
+
+> 注意：滑块验证码、二次校验、服务端排队/库存分配等属于硬限制，工具无法绕过。请合理使用，遵守大麦网服务条款。
+
 ## 项目结构
 
 ```
@@ -145,7 +155,8 @@ macOS 用户也可以直接双击 `start.command`。
 │   ├── browser.py       # Chrome CDP 连接管理
 │   ├── timer.py         # NTP 校时 + 精准等待
 │   ├── grabber.py       # 桌面端抢票执行器
-│   └── mobile_grabber.py # 移动端抢票执行器（uiautomator2）
+│   ├── mobile_grabber.py # 移动端抢票执行器（uiautomator2）
+│   └── stealth.py       # 反检测注入（去自动化指纹）
 ├── gui/
 │   ├── worker.py        # 桌面端工作线程
 │   ├── mobile_worker.py # 移动端工作线程

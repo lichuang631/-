@@ -29,8 +29,8 @@ class TicketGrabber:
     def __init__(
         self,
         poll_interval_ms: int = 50,
-        max_retries: int = 3,
-        retry_interval_ms: int = 500,
+        max_retries: int = 40,
+        retry_interval_ms: int = 50,
         confirm_timeout_ms: int = 5000,
     ):
         self.poll_interval_ms = poll_interval_ms

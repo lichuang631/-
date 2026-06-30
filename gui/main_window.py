@@ -151,7 +151,11 @@ class MainWindow(QMainWindow):
             self._log("请在 config.json 中设置 chrome_path")
             return
 
-        cmd = [chrome_path, f"--remote-debugging-port={port}"]
+        cmd = [
+            chrome_path,
+            f"--remote-debugging-port={port}",
+            "--disable-blink-features=AutomationControlled",
+        ]
         try:
             self._chrome_process = subprocess.Popen(cmd)
             self.label_browser_status.setText(f"浏览器: 已启动 (端口 {port})")
@@ -201,7 +205,7 @@ class MainWindow(QMainWindow):
             )
         else:
             port = self.config.get("debug_port", 9222)
-            cdp_url = f"http://localhost:{port}"
+            cdp_url = f"http://127.0.0.1:{port}"
             grab_cfg = self.config.get("grab", DEFAULT_CONFIG["grab"])
             self.worker = GrabWorker(
                 cdp_url=cdp_url,

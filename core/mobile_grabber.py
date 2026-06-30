@@ -1,3 +1,4 @@
+import random
 import time
 from typing import Callable, Optional
 
@@ -44,6 +45,16 @@ class MobileGrabber:
         self.click_interval_ms = click_interval_ms
         self.confirm_clicks = confirm_clicks
 
+    def _jittered_interval(self) -> float:
+        # 给连点间隔加 ±30% 抖动，避免完美的机械节奏被风控标记
+        return self.click_interval_ms / 1000 * random.uniform(0.7, 1.3)
+
+    def _jittered_pos(self, w: int, h: int, fx: float, fy: float) -> tuple[int, int]:
+        # 坐标兜底点击时落点加几像素随机偏移，避免每次点同一个像素
+        jx = int(w * fx) + random.randint(-6, 6)
+        jy = int(h * fy) + random.randint(-6, 6)
+        return jx, jy
+
     def click_buy(self, device, on_log: Callable[[str], None]) -> bool:
         w, h = device.window_size()
         for attempt in range(self.max_retries):
@@ -58,18 +69,22 @@ class MobileGrabber:
 
             if not clicked:
                 fx, fy = _FALLBACK_BUY_POS
-                device.click(int(w * fx), int(h * fy))
+                bx, by = self._jittered_pos(w, h, fx, fy)
+                device.click(bx, by)
                 on_log(f"第 {attempt + 1} 次尝试 — 坐标兜底点击 ({fx:.0%}, {fy:.0%})")
 
             for det_text in _ORDER_DETECTED_TEXTS:
                 if device(text=det_text).exists(timeout=0.1):
                     on_log(f"第 {attempt + 1} 次尝试 — 检测到订单页面")
                     return True
-            if device(textContains="¥").exists(timeout=0.1):
-                on_log(f"第 {attempt + 1} 次尝试 — 检测到订单页面")
-                return True
+            try:
+                if device(textContains="¥").exists(timeout=0.1):
+                    on_log(f"第 {attempt + 1} 次尝试 — 检测到订单页面")
+                    return True
+            except TypeError:
+                pass
 
-            time.sleep(self.click_interval_ms / 1000)
+            time.sleep(self._jittered_interval())
 
         on_log(f"购买按钮点击失败，已尝试 {self.max_retries} 次")
         return False
@@ -85,13 +100,11 @@ class MobileGrabber:
                 break
 
         fx, fy = _FALLBACK_CONFIRM_POS
-        on_log(f"坐标连点 ({fx:.0%}, {fy:.0%}) × {self.confirm_clicks}")
+        on_log(f"坐标兜底连点 ({fx:.0%}, {fy:.0%}) × {self.confirm_clicks}")
         for _ in range(self.confirm_clicks):
-            device.click(int(w * fx), int(h * fy))
-
-        on_log(f"兜底连点 ({fx:.0%}, {fy:.0%}) × {self.confirm_clicks}")
-        for _ in range(self.confirm_clicks):
-            device.click(int(w * fx), int(h * fy))
+            cx, cy = self._jittered_pos(w, h, fx, fy)
+            device.click(cx, cy)
+            time.sleep(self._jittered_interval())
 
         return True
 

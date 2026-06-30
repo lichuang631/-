@@ -77,12 +77,10 @@ class GrabWorker(QThread):
 
         self.log_message.emit(f"已连接到页面: {page.url}")
 
-        try:
-            from playwright_stealth import stealth_async
-            await stealth_async(page)
-            self.log_message.emit("stealth 注入完成")
-        except ImportError:
-            self.log_message.emit("playwright-stealth 未安装，跳过 stealth 注入")
+        from core.stealth import apply_stealth
+        await apply_stealth(
+            page.context, page, on_log=lambda msg: self.log_message.emit(msg)
+        )
 
         self.status_changed.emit("等待开票时间...")
         while not self._stop_flag:

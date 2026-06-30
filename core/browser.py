@@ -43,12 +43,13 @@ class BrowserManager:
 
     @property
     def cdp_url(self) -> str:
-        return f"http://localhost:{self.debug_port}"
+        return f"http://127.0.0.1:{self.debug_port}"
 
     def build_launch_command(self) -> list:
         return [
             self.chrome_path,
             f"--remote-debugging-port={self.debug_port}",
+            "--disable-blink-features=AutomationControlled",
         ]
 
     def launch_browser(self) -> subprocess.Popen:
