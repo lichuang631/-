@@ -1,0 +1,59 @@
+{
+  "mode": "mobile",
+  "chrome_path": "",
+  "debug_port": 9222,
+  "grab": {
+    "max_retries": 40,
+    "retry_interval_ms": 50,
+    "poll_interval_ms": 50,
+    "confirm_timeout_ms": 5000
+  },
+  "mobile": {
+    "device_serial": "",
+    "max_retries": 120,
+    "click_interval_ms": 0,
+    "confirm_clicks": 10,
+    "advance_seconds": 0,
+    "max_run_seconds": 180,
+    "normal_check_interval": 1.0,
+    "fast_check_interval": 0.2,
+    "popup_wait_seconds": 0.2,
+    "post_submit_check_seconds": 1.0,
+    "fallback_popup_taps_enabled": false,
+    "fallback_popup_taps": [[0.5, 0.56], [0.5, 0.61]],
+    "fallback_popup_after_seconds": 0.45,
+    "opencv_enabled": true,
+    "opencv_threshold": 0.75,
+    "opencv_match_scale": 0.6,
+    "opencv_scan_interval": 0.2,
+    "opencv_refresh_wait_seconds": 0.35,
+    "opencv_try_wait_seconds": 0.15,
+    "opencv_cached_try_seconds": 6.0,
+    "opencv_cached_try_max_taps": 12,
+    "opencv_cached_try_verify_every": 3,
+    "opencv_start_delay_seconds": 0.3,
+    "opencv_roi": [0.0, 0.3, 1.0, 0.98],
+    "opencv_templates": {
+      "refresh": "btn_refresh.png",
+      "try": "btn_try.png",
+      "submit": "btn_submit.png"
+    },
+    "ticket_priority": ["看台880", "内场1080", "内场1380", "内场1680", "看台580", "看台380"],
+    "ticket_positions": {
+      "看台380": [0.29, 0.44],
+      "看台580": [0.29, 0.52],
+      "看台880": [0.29, 0.59],
+      "内场1080": [0.29, 0.67],
+      "内场1380": [0.29, 0.74],
+      "内场1680": [0.29, 0.81]
+    },
+    "ticket_confirm_pos": [0.78, 0.92],
+    "ticket_select_wait_seconds": 0.35,
+    "connect_retries": 3,
+    "connect_retry_delay": 0.5
+  },
+  "ntp": {
+    "servers": ["ntp.aliyun.com", "ntp.tencent.com", "cn.pool.ntp.org"],
+    "timeout_s": 3
+  }
+}

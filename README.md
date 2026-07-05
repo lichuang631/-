@@ -93,7 +93,19 @@ macOS 用户也可以直接双击 `start.command`。
 
 ## 配置
 
-编辑 `config.json` 自定义参数：
+首次运行前复制示例配置：
+
+```bash
+cp config.example.json config.json
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item config.example.json config.json
+```
+
+然后编辑本地 `config.json` 自定义参数。`config.json` 是个人运行配置，默认不会提交到仓库。
 
 ```json
 {
@@ -132,6 +144,14 @@ macOS 用户也可以直接双击 `start.command`。
 | `mobile.click_interval_ms` | 移动端连点间隔（毫秒） |
 | `mobile.confirm_clicks` | 移动端确认订单坐标连点次数 |
 | `mobile.advance_seconds` | 提前开始点击的秒数 |
+
+移动端 OpenCV 识别需要在项目目录放置按钮模板图，文件名可在 `config.json` 里配置：
+
+- `btn_refresh.png`：努力刷新
+- `btn_try.png`：继续尝试
+- `btn_submit.png`：立即提交
+
+模板图建议只裁剪按钮主体，不要带多余背景。
 
 ## 反检测说明
 

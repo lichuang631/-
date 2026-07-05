@@ -29,3 +29,20 @@ Thumbs.db
 # Environment
 .env
 .env.*
+
+# Local runtime config
+config.json
+
+# Local screenshots, button captures, and debug artifacts
+*.png
+*.jpg
+*.jpeg
+*.webp
+_*.py
+_*.txt
+check_*.py
+patch_*.py
+test_phone.*
+
+# Keep template placeholders/documentation explicit if needed
+!config.example.json

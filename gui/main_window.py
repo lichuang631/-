@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QDateTimeEdit, QTextEdit, QGroupBox,
     QRadioButton, QButtonGroup,
 )
-from PyQt6.QtCore import Qt, QDateTime
+from PyQt6.QtCore import Qt, QDateTime, QTime
 from PyQt6.QtGui import QFont, QTextCursor
 
 from gui.worker import GrabWorker
@@ -81,10 +81,24 @@ class MainWindow(QMainWindow):
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("开票时间:"))
         self.dt_edit = QDateTimeEdit()
-        self.dt_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.dt_edit.setDisplayFormat("HH:mm:ss")
         self.dt_edit.setDateTime(QDateTime.currentDateTime())
         self.dt_edit.setCalendarPopup(True)
         row2.addWidget(self.dt_edit)
+
+        self.btn_quick_0 = QPushButton("整点开抢")
+        self.btn_quick_0.clicked.connect(self._set_next_hour)
+        self.btn_quick_30 = QPushButton("+30秒")
+        self.btn_quick_30.clicked.connect(lambda: self._add_seconds(30))
+        self.btn_quick_60 = QPushButton("+60秒")
+        self.btn_quick_60.clicked.connect(lambda: self._add_seconds(60))
+        self.btn_quick_now = QPushButton("当前时间")
+        self.btn_quick_now.clicked.connect(self._set_now)
+        row2.addWidget(self.btn_quick_0)
+        row2.addWidget(self.btn_quick_30)
+        row2.addWidget(self.btn_quick_60)
+        row2.addWidget(self.btn_quick_now)
+
         self.btn_start = QPushButton("开始抢票")
         self.btn_start.clicked.connect(self._on_start)
         self.btn_stop = QPushButton("停止")
@@ -189,6 +203,27 @@ class MainWindow(QMainWindow):
             self._log("  2. 手机已开启 USB 调试（开发者选项中）")
             self._log("  3. 手机弹窗已点击「允许 USB 调试」")
 
+
+
+    def _set_now(self):
+        """还原为当前时间"""
+        self.dt_edit.setDateTime(QDateTime.currentDateTime())
+
+    def _set_next_hour(self):
+        """设置为下一个整点"""
+        now = QDateTime.currentDateTime()
+        hour = now.time().hour()
+        target = QDateTime(now.date(), QTime(hour, 0, 0))
+        if target <= now:
+            target = target.addSecs(3600)
+        self.dt_edit.setDateTime(target)
+        self._log(f"已设为下一个整点: {target.toString('yyyy-MM-dd HH:mm:ss')}")
+
+    def _add_seconds(self, secs: int):
+        """在当前时间上增加指定秒数"""
+        target = QDateTime.currentDateTime().addSecs(secs)
+        self.dt_edit.setDateTime(target)
+        self._log(f"已设为 {target.toString('yyyy-MM-dd HH:mm:ss')} (+{secs}秒)")
     def _on_start(self):
         target_qdt = self.dt_edit.dateTime()
         target_dt = target_qdt.toPyDateTime()
