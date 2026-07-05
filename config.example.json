@@ -35,11 +35,13 @@
     "opencv_cached_try_max_taps": 12,
     "opencv_cached_try_verify_every": 3,
     "opencv_start_delay_seconds": 0.3,
-    "opencv_roi": [0.0, 0.3, 1.0, 0.98],
+    "opencv_roi": [0.0, 0.2, 1.0, 0.98],
     "opencv_templates": {
       "refresh": "btn_refresh.png",
       "try": "btn_try.png",
-      "submit": "btn_submit.png"
+      "submit": "btn_submit.png",
+      "verify_title": "btn_verify_title.png",
+      "verify_slider": "btn_verify_slider.png"
     },
     "ticket_priority": ["看台880", "内场1080", "内场1380", "内场1680", "看台580", "看台380"],
     "ticket_positions": {

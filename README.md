@@ -108,6 +108,8 @@ Copy-Item config.example.json config.json
 btn_refresh.png  努力刷新
 btn_try.png      继续尝试
 btn_submit.png   立即提交
+btn_verify_title.png   验证页标题/提示
+btn_verify_slider.png  滑块验证区域
 ```
 
 模板建议：

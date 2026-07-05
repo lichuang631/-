@@ -92,7 +92,7 @@ class MobileGrabber:
         opencv_cached_try_max_taps: int = 12,
         opencv_cached_try_verify_every: int = 3,
         opencv_start_delay_seconds: float = 0.3,
-        opencv_roi: tuple[float, float, float, float] = (0.0, 0.30, 1.0, 0.98),
+        opencv_roi: tuple[float, float, float, float] = (0.0, 0.20, 1.0, 0.98),
         opencv_templates: Optional[dict[str, str]] = None,
         ticket_priority: Optional[list[str]] = None,
         ticket_positions: Optional[dict[str, tuple[float, float]]] = None,
@@ -129,6 +129,8 @@ class MobileGrabber:
             "refresh": "btn_refresh.png",
             "try": "btn_try.png",
             "submit": "btn_submit.png",
+            "verify_title": "btn_verify_title.png",
+            "verify_slider": "btn_verify_slider.png",
         }
         self._opencv_ready_logged = False
         self._template_cache = {}
@@ -300,6 +302,16 @@ class MobileGrabber:
             return "normal"
         screen_gray, offset_x, offset_y = self._opencv_scan_gray(screen)
 
+        for label, template_key in [
+            ("验证提示", "verify_title"),
+            ("滑块验证", "verify_slider"),
+        ]:
+            template_path = self.opencv_templates.get(template_key, "")
+            matched, _, _, score = self._match_template_gray(screen_gray, template_path, offset_x, offset_y)
+            if matched:
+                on_log(f"OpenCV识别到「{label}」(score={score:.2f})，暂停自动点击")
+                return "manual_pause"
+
         for label, template_key, wait_seconds in [
             ("努力刷新", "refresh", self.opencv_refresh_wait_seconds),
             ("继续尝试", "try", self.opencv_try_wait_seconds),
@@ -364,7 +376,23 @@ class MobileGrabber:
     def _is_manual_verify_page(self, device) -> bool:
         if not self.manual_pause_enabled:
             return False
-        return self._exists_any_contains(device, _MANUAL_VERIFY_MARKERS)
+        if self._exists_any_contains(device, _MANUAL_VERIFY_MARKERS):
+            return True
+        return self._is_opencv_verify_page(device)
+
+    def _is_opencv_verify_page(self, device) -> bool:
+        if not self.opencv_enabled or cv2 is None or np is None:
+            return False
+        screen = self._screenshot_bgr(device)
+        if screen is None:
+            return False
+        screen_gray, offset_x, offset_y = self._opencv_scan_gray(screen)
+        for template_key in ["verify_title", "verify_slider"]:
+            template_path = self.opencv_templates.get(template_key, "")
+            matched, _, _, _ = self._match_template_gray(screen_gray, template_path, offset_x, offset_y)
+            if matched:
+                return True
+        return False
 
     def _wait_manual_intervention(self, device, on_log: Callable[[str], None], deadline: float) -> str:
         self._cached_try_point = None
@@ -538,6 +566,14 @@ class MobileGrabber:
                         return state
 
                 opencv_state = self._handle_opencv_buttons(device, on_log)
+                if opencv_state == "manual_pause":
+                    state = self._wait_manual_intervention(device, on_log, deadline)
+                    if state in ("order", "soldout", "payment", "stopped", "timeout"):
+                        return state
+                    if state == "retry_fast":
+                        check_gap = self.fast_check_interval
+                        last_check = time.time()
+                        continue
                 if opencv_state == "success":
                     return "submitted"
                 if opencv_state == "retry":
@@ -586,6 +622,18 @@ class MobileGrabber:
             if now - last_opencv_scan >= self.opencv_scan_interval:
                 opencv_state = self._handle_opencv_buttons(device, on_log)
                 last_opencv_scan = now
+                if opencv_state == "manual_pause":
+                    state = self._wait_manual_intervention(device, on_log, deadline)
+                    if state == "payment":
+                        return "success"
+                    if state == "order":
+                        return "success"
+                    if state in ("stopped", "timeout"):
+                        return state
+                    if state == "soldout":
+                        return "soldout"
+                    if state == "retry_fast":
+                        return "retry"
                 if opencv_state in ("success", "retry"):
                     return opencv_state
 

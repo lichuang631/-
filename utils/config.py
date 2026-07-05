@@ -40,7 +40,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "opencv_cached_try_max_taps": 12,
         "opencv_cached_try_verify_every": 3,
         "opencv_start_delay_seconds": 0.3,
-        "opencv_roi": [0.0, 0.30, 1.0, 0.98],
+        "opencv_roi": [0.0, 0.20, 1.0, 0.98],
         "opencv_templates": {
             "refresh": "btn_refresh.png",
             "try": "btn_try.png",
