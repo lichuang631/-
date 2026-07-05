@@ -13,6 +13,7 @@ except ImportError:
     np = None
 
 from core.grabber import GrabResult
+from core.scrcpy_capture import ScrcpyWindowCapture
 
 _BUY_BUTTON_TEXTS = ["立即抢购", "立即购买", "立即预订", "选座购买", "确定"]
 
@@ -94,6 +95,15 @@ class MobileGrabber:
         opencv_start_delay_seconds: float = 0.3,
         opencv_roi: tuple[float, float, float, float] = (0.0, 0.20, 1.0, 0.98),
         opencv_templates: Optional[dict[str, str]] = None,
+        video_stream_enabled: bool = False,
+        scrcpy_path: str = "",
+        video_stream_window_title: str = "DamaiGrabberScrcpy",
+        video_stream_max_fps: int = 30,
+        video_stream_bit_rate: str = "4M",
+        video_stream_startup_timeout: float = 10.0,
+        video_stream_always_on_top: bool = True,
+        video_stream_fallback_screenshot: bool = True,
+        video_stream_device_serial: str = "",
         ticket_priority: Optional[list[str]] = None,
         ticket_positions: Optional[dict[str, tuple[float, float]]] = None,
         ticket_confirm_pos: tuple[float, float] = (0.78, 0.92),
@@ -132,6 +142,21 @@ class MobileGrabber:
             "verify_title": "btn_verify_title.png",
             "verify_slider": "btn_verify_slider.png",
         }
+        self.video_stream_enabled = video_stream_enabled
+        self.scrcpy_path = scrcpy_path
+        self.video_stream_window_title = video_stream_window_title
+        self.video_stream_max_fps = video_stream_max_fps
+        self.video_stream_bit_rate = video_stream_bit_rate
+        self.video_stream_startup_timeout = video_stream_startup_timeout
+        self.video_stream_always_on_top = video_stream_always_on_top
+        self.video_stream_fallback_screenshot = video_stream_fallback_screenshot
+        self.video_stream_device_serial = video_stream_device_serial
+        self._video_capture: Optional[ScrcpyWindowCapture] = None
+        self._video_enabled_runtime = False
+        self._video_source_logged = False
+        self._screenshot_fallback_logged = False
+        self._screen_to_device_scale = (1.0, 1.0)
+        self._device_window_size: Optional[tuple[int, int]] = None
         self._opencv_ready_logged = False
         self._template_cache = {}
         self._scaled_template_cache = {}
@@ -145,9 +170,44 @@ class MobileGrabber:
         self.ticket_select_wait_seconds = ticket_select_wait_seconds
         self.should_stop = should_stop or (lambda: False)
 
+    def prepare_video_stream(self, on_log: Callable[[str], None]) -> None:
+        """提前启动 scrcpy 画面源；失败时保留原截图模式。"""
+        if not self.video_stream_enabled:
+            return
+        if not self.scrcpy_path:
+            on_log("已开启视频流识别，但未配置scrcpy_path，已回退普通截图模式")
+            return
+
+        capture = ScrcpyWindowCapture(
+            scrcpy_path=self.scrcpy_path,
+            window_title=self.video_stream_window_title,
+            device_serial=self.video_stream_device_serial,
+            max_fps=self.video_stream_max_fps,
+            video_bit_rate=self.video_stream_bit_rate,
+            startup_timeout=self.video_stream_startup_timeout,
+            always_on_top=self.video_stream_always_on_top,
+            fallback_screenshot=self.video_stream_fallback_screenshot,
+        )
+        self._video_enabled_runtime = capture.start(on_log)
+        if self._video_enabled_runtime:
+            self._video_capture = capture
+        else:
+            capture.stop()
+
+    def close_video_stream(self) -> None:
+        if self._video_capture:
+            self._video_capture.stop()
+        self._video_capture = None
+        self._video_enabled_runtime = False
+
     def _jittered_interval(self) -> float:
         # 给连点间隔加 ±30% 抖动，避免完美的机械节奏被风控标记
         return self.click_interval_ms / 1000 * random.uniform(0.7, 1.3)
+
+    def _get_device_window_size(self, device) -> tuple[int, int]:
+        if self._device_window_size is None:
+            self._device_window_size = device.window_size()
+        return self._device_window_size
 
     def _jittered_pos(self, w: int, h: int, fx: float, fy: float) -> tuple[int, int]:
         # 坐标兜底点击时落点加几像素随机偏移，避免每次点同一个像素
@@ -170,7 +230,7 @@ class MobileGrabber:
         rel_points: list[tuple[float, float]],
         jitter: int = 4,
     ) -> None:
-        w, h = device.window_size()
+        w, h = self._get_device_window_size(device)
         points = [
             (int(w * fx) + random.randint(-jitter, jitter), int(h * fy) + random.randint(-jitter, jitter))
             for fx, fy in rel_points
@@ -209,12 +269,40 @@ class MobileGrabber:
     def _is_order_page(self, device) -> bool:
         return self._exists_any_text(device, _ORDER_DETECTED_TEXTS, _BUY_DETECT_TIMEOUT)
 
-    def _screenshot_bgr(self, device):
+    def _screenshot_bgr(self, device, on_log: Optional[Callable[[str], None]] = None):
         if cv2 is None or np is None:
+            return None
+        if self._video_enabled_runtime and self._video_capture:
+            try:
+                frame = self._video_capture.grab_bgr()
+                if frame is not None:
+                    device_w, device_h = self._get_device_window_size(device)
+                    frame_h, frame_w = frame.shape[:2]
+                    if frame_w > 0 and frame_h > 0:
+                        self._screen_to_device_scale = (
+                            device_w / frame_w,
+                            device_h / frame_h,
+                        )
+                    if on_log and not self._video_source_logged:
+                        on_log("OpenCV识别使用 scrcpy 视频窗口帧")
+                        self._video_source_logged = True
+                    return frame
+                if (
+                    on_log
+                    and self.video_stream_fallback_screenshot
+                    and not self._screenshot_fallback_logged
+                ):
+                    on_log("scrcpy视频帧暂不可用，OpenCV已回退普通手机截图")
+                    self._screenshot_fallback_logged = True
+            except Exception:
+                if not self.video_stream_fallback_screenshot:
+                    return None
+        if self._video_enabled_runtime and not self.video_stream_fallback_screenshot:
             return None
         try:
             image = device.screenshot()
             rgb = np.array(image.convert("RGB"))
+            self._screen_to_device_scale = (1.0, 1.0)
             return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         except Exception:
             return None
@@ -248,15 +336,25 @@ class MobileGrabber:
         if screen_gray is None or template is None:
             return False, 0, 0, 0.0
         scale = self.opencv_match_scale
-        if 0 < scale < 1.0:
+        device_scale_x, device_scale_y = self._screen_to_device_scale
+        template_scale_x = 1.0 / device_scale_x
+        template_scale_y = 1.0 / device_scale_y
+        if 0 < scale < 1.0 or abs(template_scale_x - 1.0) > 0.001 or abs(template_scale_y - 1.0) > 0.001:
             screen_gray = cv2.resize(screen_gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-            cache_key = (str(Path(template_path).resolve()), round(scale, 3))
+            cache_key = (
+                str(Path(template_path).resolve()),
+                round(scale, 3),
+                round(template_scale_x, 3),
+                round(template_scale_y, 3),
+            )
             if cache_key not in self._scaled_template_cache:
+                fx = max(0.05, scale * template_scale_x)
+                fy = max(0.05, scale * template_scale_y)
                 self._scaled_template_cache[cache_key] = cv2.resize(
                     template,
                     None,
-                    fx=scale,
-                    fy=scale,
+                    fx=fx,
+                    fy=fy,
                     interpolation=cv2.INTER_AREA,
                 )
             template = self._scaled_template_cache[cache_key]
@@ -267,14 +365,14 @@ class MobileGrabber:
         if max_val < self.opencv_threshold:
             return False, 0, 0, float(max_val)
         h, w = template.shape[:2]
-        if 0 < scale < 1.0:
-            return (
-                True,
-                offset_x + int((max_loc[0] + w // 2) / scale),
-                offset_y + int((max_loc[1] + h // 2) / scale),
-                float(max_val),
-            )
-        return True, offset_x + max_loc[0] + w // 2, offset_y + max_loc[1] + h // 2, float(max_val)
+        screen_x = offset_x + int((max_loc[0] + w // 2) / scale)
+        screen_y = offset_y + int((max_loc[1] + h // 2) / scale)
+        return (
+            True,
+            int(screen_x * device_scale_x),
+            int(screen_y * device_scale_y),
+            float(max_val),
+        )
 
     def _opencv_scan_gray(self, screen_bgr):
         screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
@@ -297,7 +395,7 @@ class MobileGrabber:
                 self._opencv_ready_logged = True
             return "normal"
 
-        screen = self._screenshot_bgr(device)
+        screen = self._screenshot_bgr(device, on_log)
         if screen is None:
             return "normal"
         screen_gray, offset_x, offset_y = self._opencv_scan_gray(screen)
@@ -364,20 +462,27 @@ class MobileGrabber:
     def _is_ticket_page(self, device) -> bool:
         return all(self._exists_any_contains(device, [marker]) for marker in _TICKET_PAGE_MARKERS)
 
-    def _is_payment_page(self, device) -> bool:
+    def _is_visual_fast_mode(self) -> bool:
+        return self.opencv_enabled and self._video_enabled_runtime
+
+    def _is_payment_page(self, device, include_text: bool = True) -> bool:
         try:
             package_name = device.app_current().get("package", "")
             if any(marker.lower() in package_name.lower() for marker in _PAYMENT_PACKAGES):
                 return True
         except Exception:
             pass
+        if not include_text:
+            return False
         return self._exists_any_contains(device, _PAYMENT_MARKERS)
 
-    def _is_manual_verify_page(self, device) -> bool:
+    def _is_manual_verify_page(self, device, include_opencv: bool = True) -> bool:
         if not self.manual_pause_enabled:
             return False
         if self._exists_any_contains(device, _MANUAL_VERIFY_MARKERS):
             return True
+        if not include_opencv:
+            return False
         return self._is_opencv_verify_page(device)
 
     def _is_opencv_verify_page(self, device) -> bool:
@@ -417,13 +522,18 @@ class MobileGrabber:
         on_log("人工处理等待超时，继续自动尝试")
         return "retry_fast"
 
-    def _handle_page_state(self, device, on_log: Callable[[str], None]) -> str:
+    def _handle_page_state(
+        self,
+        device,
+        on_log: Callable[[str], None],
+        include_opencv_verify: bool = True,
+    ) -> str:
         """低频检查页面状态，只在弹窗/订单/售罄等特殊页面介入。"""
         if self._is_payment_page(device):
             on_log("检测到支付宝/支付界面，停止脚本，请手动完成支付")
             return "payment"
 
-        if self._is_manual_verify_page(device):
+        if self._is_manual_verify_page(device, include_opencv=include_opencv_verify):
             return "manual_pause"
 
         if self._exists_any_contains(device, _SOLD_OUT_MARKERS):
@@ -509,7 +619,7 @@ class MobileGrabber:
         return "retry_fast"
 
     def click_buy(self, device, on_log: Callable[[str], None], deadline: float) -> str:
-        w, h = device.window_size()
+        w, h = self._get_device_window_size(device)
         fx, fy = _FALLBACK_BUY_POS
         check_gap = self.normal_check_interval
         last_check = 0.0
@@ -526,44 +636,11 @@ class MobileGrabber:
                 if not self._cached_try_need_verify:
                     continue
 
-            points = [
-                self._jittered_pos(w, h, fx, fy)
-                for _ in range(_BUY_BURST_CLICKS)
-            ]
-            self._tap_points(device, points)
-
-            if time.time() < detect_enabled_at:
-                continue
-
-            if self._is_order_page(device):
-                state = self._handle_page_state(device, on_log)
-                if state == "manual_pause":
-                    state = self._wait_manual_intervention(device, on_log, deadline)
-                if state in ("order", "soldout", "payment"):
-                    return state
-                if state in ("stopped", "timeout"):
-                    return state
-                if state == "ticket":
-                    state = self._select_ticket_by_priority(device, on_log, deadline)
-                    if state in ("order", "soldout", "payment", "stopped", "timeout"):
-                        return state
-                check_gap = self.fast_check_interval if state == "retry_fast" else self.normal_check_interval
-                last_check = time.time()
-                continue
-
             now = time.time()
-            if now - last_check >= check_gap:
-                state = self._handle_page_state(device, on_log)
-                if state == "manual_pause":
-                    state = self._wait_manual_intervention(device, on_log, deadline)
-                if state in ("order", "soldout", "payment"):
-                    return state
-                if state in ("stopped", "timeout"):
-                    return state
-                if state == "ticket":
-                    state = self._select_ticket_by_priority(device, on_log, deadline)
-                    if state in ("order", "soldout", "payment", "stopped", "timeout"):
-                        return state
+            if time.time() >= detect_enabled_at and now - last_check >= check_gap:
+                if not self._is_visual_fast_mode() and self._is_payment_page(device):
+                    on_log("检测到支付宝/支付界面，停止脚本，请手动完成支付")
+                    return "payment"
 
                 opencv_state = self._handle_opencv_buttons(device, on_log)
                 if opencv_state == "manual_pause":
@@ -581,13 +658,94 @@ class MobileGrabber:
                     last_check = time.time()
                     continue
 
+                if self._is_visual_fast_mode():
+                    last_check = time.time()
+                else:
+                    state = self._handle_page_state(device, on_log, include_opencv_verify=False)
+                    if state == "manual_pause":
+                        state = self._wait_manual_intervention(device, on_log, deadline)
+                    if state in ("order", "soldout", "payment"):
+                        return state
+                    if state in ("stopped", "timeout"):
+                        return state
+                    if state == "ticket":
+                        state = self._select_ticket_by_priority(device, on_log, deadline)
+                        if state in ("order", "soldout", "payment", "stopped", "timeout"):
+                            return state
+                    last_check = time.time()
+                    check_gap = self.fast_check_interval if state == "retry_fast" else self.normal_check_interval
+
+            points = [
+                self._jittered_pos(w, h, fx, fy)
+                for _ in range(_BUY_BURST_CLICKS)
+            ]
+            self._tap_points(device, points)
+
+            if time.time() < detect_enabled_at:
+                continue
+
+            if not self._is_visual_fast_mode() and self._is_order_page(device):
+                state = self._handle_page_state(device, on_log, include_opencv_verify=False)
+                if state == "manual_pause":
+                    state = self._wait_manual_intervention(device, on_log, deadline)
+                if state in ("order", "soldout", "payment"):
+                    return state
+                if state in ("stopped", "timeout"):
+                    return state
+                if state == "ticket":
+                    state = self._select_ticket_by_priority(device, on_log, deadline)
+                    if state in ("order", "soldout", "payment", "stopped", "timeout"):
+                        return state
+                check_gap = self.fast_check_interval if state == "retry_fast" else self.normal_check_interval
+                last_check = time.time()
+                continue
+
+            now = time.time()
+            if now - last_check >= check_gap:
+                if not self._is_visual_fast_mode() and self._is_payment_page(device):
+                    on_log("检测到支付宝/支付界面，停止脚本，请手动完成支付")
+                    return "payment"
+
+                opencv_state = self._handle_opencv_buttons(device, on_log)
+                if opencv_state == "manual_pause":
+                    state = self._wait_manual_intervention(device, on_log, deadline)
+                    if state in ("order", "soldout", "payment", "stopped", "timeout"):
+                        return state
+                    if state == "retry_fast":
+                        check_gap = self.fast_check_interval
+                        last_check = time.time()
+                        continue
+                if opencv_state == "success":
+                    return "submitted"
+                if opencv_state == "retry":
+                    check_gap = self.fast_check_interval
+                    last_check = time.time()
+                    continue
+
+                if self._is_visual_fast_mode():
+                    last_check = time.time()
+                    check_gap = self.normal_check_interval
+                    continue
+
+                state = self._handle_page_state(device, on_log, include_opencv_verify=False)
+                if state == "manual_pause":
+                    state = self._wait_manual_intervention(device, on_log, deadline)
+                if state in ("order", "soldout", "payment"):
+                    return state
+                if state in ("stopped", "timeout"):
+                    return state
+                if state == "ticket":
+                    state = self._select_ticket_by_priority(device, on_log, deadline)
+                    if state in ("order", "soldout", "payment", "stopped", "timeout"):
+                        return state
+
                 last_check = time.time()
                 check_gap = self.fast_check_interval if state == "retry_fast" else self.normal_check_interval
 
         return "retry"
 
     def confirm_order(self, device, on_log: Callable[[str], None]) -> bool:
-        w, h = device.window_size()
+        w, h = self._get_device_window_size(device)
         fx, fy = _FALLBACK_CONFIRM_POS
         points = [
             self._jittered_pos(w, h, fx, fy)
@@ -604,19 +762,11 @@ class MobileGrabber:
         while time.time() < end_at:
             if self.should_stop():
                 return "stopped"
-            state = self._handle_page_state(device, on_log)
-            if state == "manual_pause":
-                state = self._wait_manual_intervention(device, on_log, deadline)
-            if state == "payment":
-                return "success"
-            if state == "order":
-                return "success"
-            if state in ("stopped", "timeout"):
-                return state
-            if state == "soldout":
-                return "soldout"
-            if state == "retry_fast":
-                return "retry"
+            if not self._is_visual_fast_mode():
+                if self._is_payment_page(device):
+                    return "success"
+                if self._is_order_page(device):
+                    return "success"
 
             now = time.time()
             if now - last_opencv_scan >= self.opencv_scan_interval:
@@ -636,6 +786,24 @@ class MobileGrabber:
                         return "retry"
                 if opencv_state in ("success", "retry"):
                     return opencv_state
+
+            if self._is_visual_fast_mode():
+                time.sleep(0.02)
+                continue
+
+            state = self._handle_page_state(device, on_log, include_opencv_verify=False)
+            if state == "manual_pause":
+                state = self._wait_manual_intervention(device, on_log, deadline)
+            if state == "payment":
+                return "success"
+            if state == "order":
+                return "success"
+            if state in ("stopped", "timeout"):
+                return state
+            if state == "soldout":
+                return "soldout"
+            if state == "retry_fast":
+                return "retry"
 
             if (
                 self.fallback_popup_taps_enabled

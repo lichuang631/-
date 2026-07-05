@@ -84,27 +84,6 @@ class MobileGrabWorker(QThread):
         else:
             self.log_message.emit("警告: 当前前台不是大麦APP，请手动切换")
 
-        advance = self.grab_config.get("advance_seconds", 0.5)
-
-        self.status_changed.emit("等待开票时间...")
-        while not self._stop_flag:
-            remaining = self.target_timestamp - timer.now()
-            if remaining <= advance:
-                break
-            self.countdown_tick.emit(remaining)
-            if remaining > 1.0:
-                time.sleep(0.1)
-            else:
-                time.sleep(0.01)
-
-        if self._stop_flag:
-            self.grab_finished.emit(False, "用户手动停止")
-            return
-
-        if advance > 0:
-            self.log_message.emit(f"提前 {advance} 秒开始点击")
-
-        self.status_changed.emit("抢票中...")
         grabber = MobileGrabber(
             max_retries=self.grab_config.get("max_retries", 20),
             click_interval_ms=self.grab_config.get("click_interval_ms", 50),
@@ -142,6 +121,15 @@ class MobileGrabWorker(QThread):
                     "submit": "btn_submit.png",
                 },
             ),
+            video_stream_enabled=self.grab_config.get("video_stream_enabled", False),
+            scrcpy_path=self.grab_config.get("scrcpy_path", ""),
+            video_stream_window_title=self.grab_config.get("video_stream_window_title", "DamaiGrabberScrcpy"),
+            video_stream_max_fps=self.grab_config.get("video_stream_max_fps", 30),
+            video_stream_bit_rate=self.grab_config.get("video_stream_bit_rate", "4M"),
+            video_stream_startup_timeout=self.grab_config.get("video_stream_startup_timeout", 10.0),
+            video_stream_always_on_top=self.grab_config.get("video_stream_always_on_top", True),
+            video_stream_fallback_screenshot=self.grab_config.get("video_stream_fallback_screenshot", True),
+            video_stream_device_serial=self.device_serial,
             ticket_priority=self.grab_config.get("ticket_priority", []),
             ticket_positions={
                 name: tuple(point)
@@ -151,10 +139,36 @@ class MobileGrabWorker(QThread):
             ticket_select_wait_seconds=self.grab_config.get("ticket_select_wait_seconds", 0.35),
             should_stop=lambda: self._stop_flag,
         )
+        grabber.prepare_video_stream(lambda msg: self.log_message.emit(msg))
 
-        result: GrabResult = grabber.run(
-            mobile.device, on_log=lambda msg: self.log_message.emit(msg)
-        )
+        advance = self.grab_config.get("advance_seconds", 0.5)
+
+        self.status_changed.emit("等待开票时间...")
+        while not self._stop_flag:
+            remaining = self.target_timestamp - timer.now()
+            if remaining <= advance:
+                break
+            self.countdown_tick.emit(remaining)
+            if remaining > 1.0:
+                time.sleep(0.1)
+            else:
+                time.sleep(0.01)
+
+        if self._stop_flag:
+            grabber.close_video_stream()
+            self.grab_finished.emit(False, "用户手动停止")
+            return
+
+        if advance > 0:
+            self.log_message.emit(f"提前 {advance} 秒开始点击")
+
+        self.status_changed.emit("抢票中...")
+        try:
+            result: GrabResult = grabber.run(
+                mobile.device, on_log=lambda msg: self.log_message.emit(msg)
+            )
+        finally:
+            grabber.close_video_stream()
 
         self.grab_finished.emit(result.success, result.message)
 

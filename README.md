@@ -13,6 +13,7 @@
   - `继续尝试`
   - `立即提交`
 - `继续尝试` 坐标短时间缓存，减少反复截图识别带来的延迟。
+- 可选 scrcpy 投屏窗口 + `mss` 高速截图，作为 OpenCV 的更快画面源；异常时自动回退普通手机截图。
 - 检测到验证码/安全验证/滑块等需要人工处理的页面时，暂停自动点击，等待用户手动处理。
 - 检测到支付宝/支付界面后停止脚本，避免误触。
 - 支持 GUI 启动、手机连接检测、日志复盘。
@@ -99,6 +100,30 @@ Copy-Item config.example.json config.json
 | `mobile.opencv_cached_try_max_taps` | 缓存坐标最多连点次数 |
 | `mobile.opencv_cached_try_verify_every` | 缓存坐标每点几次后强制截图校验 |
 | `mobile.manual_pause_enabled` | 检测到验证页面时是否暂停自动点击，默认开启 |
+| `mobile.video_stream_enabled` | 是否启用 scrcpy 投屏窗口作为 OpenCV 画面源 |
+| `mobile.scrcpy_path` | `scrcpy.exe` 的绝对路径 |
+| `mobile.video_stream_fallback_screenshot` | 视频帧不可用时是否自动回退普通截图 |
+
+### 可选：scrcpy 视频流识别
+
+视频流模式不会替代坐标点击，只是把 OpenCV 的画面来源从 `uiautomator2.screenshot()` 换成 scrcpy 投屏窗口截图：
+
+```json
+{
+  "mobile": {
+    "video_stream_enabled": true,
+    "scrcpy_path": "D:\\load\\scrcpy-win64-v4.0\\scrcpy-win64-v4.0\\scrcpy.exe",
+    "video_stream_fallback_screenshot": true
+  }
+}
+```
+
+使用建议：
+
+- 开票前先确认 `adb devices` 能看到手机。
+- scrcpy 窗口会置顶，抢票时不要遮挡它。
+- 如果日志出现“已回退普通手机截图”，说明视频帧不可用，但脚本仍会继续按原方案运行。
+- 如果视频流识别不稳定，把 `video_stream_enabled` 改回 `false` 即可恢复原模式。
 
 ## 模板图片
 
