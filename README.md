@@ -13,6 +13,7 @@
   - `继续尝试`
   - `立即提交`
 - `继续尝试` 坐标短时间缓存，减少反复截图识别带来的延迟。
+- 检测到验证码/安全验证/滑块等需要人工处理的页面时，暂停自动点击，等待用户手动处理。
 - 检测到支付宝/支付界面后停止脚本，避免误触。
 - 支持 GUI 启动、手机连接检测、日志复盘。
 
@@ -97,6 +98,7 @@ Copy-Item config.example.json config.json
 | `mobile.opencv_cached_try_seconds` | “继续尝试”坐标缓存有效期 |
 | `mobile.opencv_cached_try_max_taps` | 缓存坐标最多连点次数 |
 | `mobile.opencv_cached_try_verify_every` | 缓存坐标每点几次后强制截图校验 |
+| `mobile.manual_pause_enabled` | 检测到验证页面时是否暂停自动点击，默认开启 |
 
 ## 模板图片
 
@@ -157,6 +159,7 @@ python main.py
 每点几次后截图校验
 识别到努力刷新 -> 点击并短等待
 识别到立即提交 -> 点击并结束
+检测到验证码/安全验证 -> 暂停自动点击，等待人工处理后继续
 检测到支付界面 -> 停止脚本，交给用户付款
 ```
 

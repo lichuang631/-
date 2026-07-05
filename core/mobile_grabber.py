@@ -35,6 +35,7 @@ _SOLD_OUT_MARKERS = ["已售罄", "售罄", "全部售罄"]
 _TICKET_PAGE_MARKERS = ["场次", "票档"]
 _PAYMENT_PACKAGES = ["alipay", "Alipay", "com.eg.android.AlipayGphone"]
 _PAYMENT_MARKERS = ["支付宝", "确认付款", "立即付款", "收银台", "付款方式"]
+_MANUAL_VERIFY_MARKERS = ["安全验证", "请完成验证", "拖动滑块", "滑块", "验证码", "点击按钮进行验证", "验证"]
 
 _DEFAULT_TICKET_POSITIONS = {
     "看台380": (0.29, 0.44),
@@ -78,6 +79,9 @@ class MobileGrabber:
         fallback_popup_taps_enabled: bool = False,
         fallback_popup_taps: Optional[list[tuple[float, float]]] = None,
         fallback_popup_after_seconds: float = 0.45,
+        manual_pause_enabled: bool = True,
+        manual_pause_poll_seconds: float = 0.2,
+        manual_pause_max_seconds: float = 45.0,
         opencv_enabled: bool = True,
         opencv_threshold: float = 0.75,
         opencv_match_scale: float = 0.6,
@@ -107,6 +111,9 @@ class MobileGrabber:
         self.fallback_popup_taps_enabled = fallback_popup_taps_enabled
         self.fallback_popup_taps = fallback_popup_taps or [(0.50, 0.56), (0.50, 0.61)]
         self.fallback_popup_after_seconds = fallback_popup_after_seconds
+        self.manual_pause_enabled = manual_pause_enabled
+        self.manual_pause_poll_seconds = manual_pause_poll_seconds
+        self.manual_pause_max_seconds = manual_pause_max_seconds
         self.opencv_enabled = opencv_enabled
         self.opencv_threshold = opencv_threshold
         self.opencv_match_scale = opencv_match_scale
@@ -354,11 +361,42 @@ class MobileGrabber:
             pass
         return self._exists_any_contains(device, _PAYMENT_MARKERS)
 
+    def _is_manual_verify_page(self, device) -> bool:
+        if not self.manual_pause_enabled:
+            return False
+        return self._exists_any_contains(device, _MANUAL_VERIFY_MARKERS)
+
+    def _wait_manual_intervention(self, device, on_log: Callable[[str], None], deadline: float) -> str:
+        self._cached_try_point = None
+        self._cached_try_until = 0.0
+        self._cached_try_taps = 0
+        self._cached_try_need_verify = False
+
+        end_at = min(deadline, time.time() + self.manual_pause_max_seconds)
+        on_log("检测到验证/需要人工处理页面，已暂停自动点击，请手动处理")
+        while time.time() < end_at:
+            if self.should_stop():
+                return "stopped"
+            if self._is_payment_page(device):
+                return "payment"
+            if self._is_order_page(device):
+                return "order"
+            if not self._is_manual_verify_page(device):
+                on_log("人工处理页面已消失，继续自动尝试")
+                return "retry_fast"
+            time.sleep(self.manual_pause_poll_seconds)
+
+        on_log("人工处理等待超时，继续自动尝试")
+        return "retry_fast"
+
     def _handle_page_state(self, device, on_log: Callable[[str], None]) -> str:
         """低频检查页面状态，只在弹窗/订单/售罄等特殊页面介入。"""
         if self._is_payment_page(device):
             on_log("检测到支付宝/支付界面，停止脚本，请手动完成支付")
             return "payment"
+
+        if self._is_manual_verify_page(device):
+            return "manual_pause"
 
         if self._exists_any_contains(device, _SOLD_OUT_MARKERS):
             on_log("检测到售罄/暂不可售状态，停止抢票")
@@ -427,11 +465,15 @@ class MobileGrabber:
             time.sleep(self.ticket_select_wait_seconds)
 
             state = self._handle_page_state(device, on_log)
+            if state == "manual_pause":
+                state = self._wait_manual_intervention(device, on_log, deadline)
             if state in ("order", "soldout", "retry_fast", "payment"):
                 return state
 
             if not self._is_ticket_page(device):
                 state = self._handle_page_state(device, on_log)
+                if state == "manual_pause":
+                    state = self._wait_manual_intervention(device, on_log, deadline)
                 if state in ("order", "soldout", "retry_fast", "payment"):
                     return state
 
@@ -467,7 +509,11 @@ class MobileGrabber:
 
             if self._is_order_page(device):
                 state = self._handle_page_state(device, on_log)
+                if state == "manual_pause":
+                    state = self._wait_manual_intervention(device, on_log, deadline)
                 if state in ("order", "soldout", "payment"):
+                    return state
+                if state in ("stopped", "timeout"):
                     return state
                 if state == "ticket":
                     state = self._select_ticket_by_priority(device, on_log, deadline)
@@ -480,7 +526,11 @@ class MobileGrabber:
             now = time.time()
             if now - last_check >= check_gap:
                 state = self._handle_page_state(device, on_log)
+                if state == "manual_pause":
+                    state = self._wait_manual_intervention(device, on_log, deadline)
                 if state in ("order", "soldout", "payment"):
+                    return state
+                if state in ("stopped", "timeout"):
                     return state
                 if state == "ticket":
                     state = self._select_ticket_by_priority(device, on_log, deadline)
@@ -519,8 +569,14 @@ class MobileGrabber:
             if self.should_stop():
                 return "stopped"
             state = self._handle_page_state(device, on_log)
+            if state == "manual_pause":
+                state = self._wait_manual_intervention(device, on_log, deadline)
             if state == "payment":
                 return "success"
+            if state == "order":
+                return "success"
+            if state in ("stopped", "timeout"):
+                return state
             if state == "soldout":
                 return "soldout"
             if state == "retry_fast":
