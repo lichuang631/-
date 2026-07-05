@@ -132,6 +132,8 @@ class ScrcpyWindowCapture:
             self.hwnd = self._find_window()
         if not self.hwnd:
             return None
+        if self._is_window_minimized(self.hwnd):
+            return None
 
         rect = self._client_screen_rect(self.hwnd)
         if not rect:
@@ -140,7 +142,7 @@ class ScrcpyWindowCapture:
         left, top, right, bottom = rect
         width = right - left
         height = bottom - top
-        if width < 20 or height < 20:
+        if width < 120 or height < 240:
             return None
 
         try:
@@ -148,6 +150,8 @@ class ScrcpyWindowCapture:
                 {"left": left, "top": top, "width": width, "height": height}
             )
             bgra = self._np.array(frame)
+            if self._is_bad_frame(bgra):
+                return None
             return self._cv2.cvtColor(bgra, self._cv2.COLOR_BGRA2BGR)
         except Exception:
             return None
@@ -192,6 +196,27 @@ class ScrcpyWindowCapture:
 
         user32.EnumWindows(enum_proc, 0)
         return matches[0] if matches else None
+
+    def _is_window_minimized(self, hwnd: int) -> bool:
+        if sys.platform != "win32":
+            return False
+        try:
+            return bool(ctypes.windll.user32.IsIconic(hwnd))
+        except Exception:
+            return False
+
+    def _is_bad_frame(self, bgra) -> bool:
+        if self._np is None:
+            return False
+        try:
+            sample = bgra[::20, ::20, :3]
+            if sample.size == 0:
+                return True
+            mean = float(sample.mean())
+            # 最小化、锁屏或异常遮挡时常见近黑画面，直接触发上层截图兜底。
+            return mean < 3.0
+        except Exception:
+            return False
 
     def _client_screen_rect(self, hwnd: int) -> Optional[tuple[int, int, int, int]]:
         if sys.platform != "win32":
