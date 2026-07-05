@@ -1,191 +1,184 @@
-# DamaiGrabber — 大麦网抢票工具
+# Damai Ticket Grabbing Script
 
-一个桌面 GUI 工具，帮助你在大麦网开票瞬间自动完成"点击购买"和"确认订单"两个操作。支持桌面端（Chrome 浏览器）**和**移动端（Android 手机 APP）两种抢票模式。初衷是为了帮我抢音律联觉的票，不过可能ipad的台前调度更好用也说不定。
+大麦移动端半自动抢票辅助工具。项目主要面向 Android 手机 APP 场景，通过 `uiautomator2` 控制手机点击，并用 OpenCV 模板匹配辅助处理回流按钮。
 
-## 两种抢票模式
+这个工具的定位不是“保证抢到”，而是把开抢瞬间和回流阶段里重复、机械、容易手慢的操作交给脚本完成；用户仍然需要提前登录、预约、盯着手机，并在支付阶段手动完成付款。
 
-### 桌面端模式（Chrome）
+## 当前能力
 
-通过 Chrome 调试协议（CDP）连接浏览器，适用于支持网页下单的票。
+- NTP 校时，到点启动。
+- Android APP 固定坐标高速点击底部购票按钮。
+- OpenCV 识别并点击：
+  - `努力刷新`
+  - `继续尝试`
+  - `立即提交`
+- `继续尝试` 坐标短时间缓存，减少反复截图识别带来的延迟。
+- 检测到支付宝/支付界面后停止脚本，避免误触。
+- 支持 GUI 启动、手机连接检测、日志复盘。
 
-```
-你手动完成：登录 → 选演出 → 选场次/票价/观演人 → 停在购买页面
-工具自动完成：NTP校时 → 精准倒计时 → 点击"立即购买" → 点击"提交订单"
-你手动完成：支付
-```
+## 使用前说明
 
-### 移动端模式（Android APP）
+请合理使用。本项目仅用于个人学习、自动化测试和个人辅助操作，不承诺成功率，不绕过平台服务端排队、库存分配、验证码、风控等限制。
 
-通过 uiautomator2 + USB 控制手机上的大麦 APP，适用于**仅APP下单**的票。
+不要用于商业倒票或其他违法违规用途。
 
-```
-你手动完成：手机登录大麦APP → 选演出 → 选场次/票价/观演人 → 停在购买页面
-工具自动完成：NTP校时 → 精准倒计时 → 连点"立即预订" → 连点"提交订单"
-你手动完成：在手机上支付
-```
+## 环境要求
 
-## 技术栈
-
-- Python 3.9+ / PyQt6（GUI）
-- Playwright（桌面端浏览器自动化，通过 CDP 协议连接）
-- 内联 JS 反检测（去自动化指纹，无第三方依赖）
-- uiautomator2（移动端 Android 设备控制）
-- ntplib（NTP 时间同步）
+- Windows/macOS
+- Python 3.9+
+- Android 手机
+- USB 数据线
+- 已开启 USB 调试
+- 手机已安装并登录大麦 APP
 
 ## 安装
 
-### 一键安装（推荐）
-
-**macOS**：双击 `setup.command`
-
-**Windows**：双击 `setup.bat`
-
-安装脚本会自动完成：创建虚拟环境 → 安装 Python 依赖 → 安装 Playwright Chromium → 检测/安装 ADB
-
-### 手动安装
+克隆仓库：
 
 ```bash
-git clone https://github.com/Siq5005/Damai-grabber.git
-cd Damai-grabber
-python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate.bat
+git clone https://gitee.com/lichuang-c/damai-ticket-grabbing-script.git
+cd damai-ticket-grabbing-script
+```
+
+Windows 推荐直接运行：
+
+```bat
+setup.bat
+```
+
+也可以手动安装：
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
-python3 -m playwright install chromium
 ```
 
-移动端还需要 ADB：
-```bash
-# macOS
-brew install android-platform-tools
-
-# Windows: 下载 Android Platform Tools 并添加到 PATH
-# https://developer.android.com/tools/releases/platform-tools
-```
-
-## 使用方法
-
-### 启动
-
-```bash
-python3 main.py
-```
-
-macOS 用户也可以直接双击 `start.command`。
-
-### 桌面端抢票流程
-
-1. 选择"桌面端(Chrome)"模式
-2. 点击"启动浏览器" — Chrome 以调试模式打开
-3. 在 Chrome 中完成准备：登录大麦网、进入演出页面、选好场次/票价/观演人
-4. 回到工具，设置开票时间，点击"开始抢票"
-5. 工具自动执行：NTP 校时 → 倒计时 → 点击购买 → 确认订单
-6. 在浏览器中手动完成支付
-
-### 移动端抢票流程
-
-1. 手机开启 USB 调试（设置 → 关于手机 → 连点版本号 7 次 → 开发者选项 → USB 调试）
-2. 用数据线连接电脑，手机弹窗点"允许 USB 调试"
-3. 选择"移动端(APP)"模式，点击"连接手机"确认连接成功
-4. 在手机上打开大麦 APP，完成准备：登录、进入演出页面、选好场次/票价/观演人
-5. 设置开票时间，点击"开始抢票"
-6. 工具自动执行：NTP 校时 → 倒计时 → 连点购买 → 连点确认
-7. 在手机上完成支付
+如果系统没有 ADB，需要安装 Android Platform Tools，并确保 `adb devices` 能看到手机。
 
 ## 配置
 
 首次运行前复制示例配置：
 
-```bash
-cp config.example.json config.json
-```
-
-Windows PowerShell：
-
 ```powershell
 Copy-Item config.example.json config.json
 ```
 
-然后编辑本地 `config.json` 自定义参数。`config.json` 是个人运行配置，默认不会提交到仓库。
+然后编辑本地 `config.json`。`config.json` 是个人运行配置，默认不会提交到仓库。
 
-```json
-{
-  "mode": "desktop",
-  "chrome_path": "",
-  "debug_port": 9222,
-  "grab": {
-    "max_retries": 3,
-    "retry_interval_ms": 500,
-    "poll_interval_ms": 50,
-    "confirm_timeout_ms": 5000
-  },
-  "mobile": {
-    "device_serial": "",
-    "max_retries": 20,
-    "click_interval_ms": 50,
-    "confirm_clicks": 10,
-    "advance_seconds": 0.5
-  },
-  "ntp": {
-    "servers": ["ntp.aliyun.com", "ntp.tencent.com", "cn.pool.ntp.org"],
-    "timeout_s": 3
-  }
-}
-```
+重点参数：
 
 | 参数 | 说明 |
-|------|------|
-| `mode` | 上次使用的模式（`desktop` / `mobile`），启动时自动恢复 |
-| `chrome_path` | Chrome 路径，留空自动检测 |
-| `debug_port` | Chrome 调试端口 |
-| `grab.max_retries` | 桌面端最大重试次数 |
-| `grab.poll_interval_ms` | 桌面端按钮检测间隔（毫秒） |
-| `mobile.device_serial` | Android 设备序列号，留空自动检测 |
-| `mobile.max_retries` | 移动端购买按钮连点次数 |
-| `mobile.click_interval_ms` | 移动端连点间隔（毫秒） |
-| `mobile.confirm_clicks` | 移动端确认订单坐标连点次数 |
-| `mobile.advance_seconds` | 提前开始点击的秒数 |
+| --- | --- |
+| `mobile.device_serial` | Android 设备序列号，留空时自动连接默认设备 |
+| `mobile.advance_seconds` | 提前点击秒数，当前建议 `0`，避免提前点到“已预约” |
+| `mobile.max_retries` | 单轮购票点击循环次数 |
+| `mobile.max_run_seconds` | 最大运行时长 |
+| `mobile.opencv_match_scale` | OpenCV 降采样匹配比例，默认 `0.6` |
+| `mobile.opencv_start_delay_seconds` | 开始后延迟多少秒再启动识别，默认 `0.3` |
+| `mobile.opencv_cached_try_seconds` | “继续尝试”坐标缓存有效期 |
+| `mobile.opencv_cached_try_max_taps` | 缓存坐标最多连点次数 |
+| `mobile.opencv_cached_try_verify_every` | 缓存坐标每点几次后强制截图校验 |
 
-移动端 OpenCV 识别需要在项目目录放置按钮模板图，文件名可在 `config.json` 里配置：
+## 模板图片
 
-- `btn_refresh.png`：努力刷新
-- `btn_try.png`：继续尝试
-- `btn_submit.png`：立即提交
+移动端 OpenCV 识别需要在项目根目录放置三张按钮模板图：
 
-模板图建议只裁剪按钮主体，不要带多余背景。
+```text
+btn_refresh.png  努力刷新
+btn_try.png      继续尝试
+btn_submit.png   立即提交
+```
 
-## 反检测说明
+模板建议：
 
-本工具的核心是「人工登录 + 人工选好 + 程序在开票瞬间帮你点击」，连接的是你自己登录的真实浏览器/手机，账号行为均由真人产生，并非传统意义上的爬虫。为降低被风控误判、保护账号，做了以下处理：
+- 只裁剪按钮主体。
+- 不要带太多背景。
+- 尽量使用和实战手机同分辨率、同主题下的截图。
+- 如果大麦页面样式变化，模板可能需要重新截。
 
-- **桌面端去自动化指纹**：启动 Chrome 时带 `--disable-blink-features=AutomationControlled`，消除最明显的 `navigator.webdriver` 标志。
-- **stealth 注入双途径**：`core/stealth.py` 用内联 JS 抹掉常见自动化特征（`chrome.runtime`、`navigator.languages`、`plugins` 等）。既通过 `add_init_script` 覆盖「点击购买后跳转的订单页」，也对当前已加载页面立即 `evaluate` 打补丁。
-- **移动端随机抖动**：连点间隔加 ±30% 抖动、坐标落点加 ±6 像素偏移，避免完美的机械节奏被标记，也更像真人操作。
+## 启动
 
-> 注意：滑块验证码、二次校验、服务端排队/库存分配等属于硬限制，工具无法绕过。请合理使用，遵守大麦网服务条款。
+Windows：
+
+```bat
+start.bat
+```
+
+或手动运行：
+
+```bash
+python main.py
+```
+
+## 推荐实战流程
+
+1. 手机开启 USB 调试。
+2. 用数据线连接电脑。
+3. 手机弹窗点击“允许 USB 调试”。
+4. 打开大麦 APP，登录账号。
+5. 进入目标演出详情页。
+6. 提前完成预约或选好目标票档。
+7. 电脑启动本工具，选择“移动端(APP)”。
+8. 点击“连接手机”，确认连接成功。
+9. 设置真实开票时间。
+10. 点击“开始抢票”。
+11. 到点后脚本自动点击底部购票按钮。
+12. 遇到“继续尝试/努力刷新”时脚本自动处理。
+13. 识别到“立即提交”时脚本自动点击。
+14. 进入支付宝/支付界面后脚本停止，用户手动支付。
+
+## 当前移动端逻辑
+
+```text
+到点启动
+前 0.3 秒只点底部购票坐标
+0.3 秒后启动页面识别
+识别到继续尝试 -> 点击并缓存坐标
+短时间内优先点缓存坐标
+每点几次后截图校验
+识别到努力刷新 -> 点击并短等待
+识别到立即提交 -> 点击并结束
+检测到支付界面 -> 停止脚本，交给用户付款
+```
+
+## 测试手机连接
+
+可以先运行：
+
+```bash
+python inspect_ui.py
+```
+
+用于检查手机连接、前台 APP、当前可读取的控件文字。
 
 ## 项目结构
 
-```
-├── main.py              # 应用入口
-├── start.command        # macOS 双击启动
-├── setup.command        # macOS 一键安装
-├── setup.bat            # Windows 一键安装
-├── config.json          # 用户配置
+```text
+├── main.py
+├── start.bat
+├── setup.bat
+├── config.example.json
 ├── core/
-│   ├── browser.py       # Chrome CDP 连接管理
-│   ├── timer.py         # NTP 校时 + 精准等待
-│   ├── grabber.py       # 桌面端抢票执行器
-│   ├── mobile_grabber.py # 移动端抢票执行器（uiautomator2）
-│   └── stealth.py       # 反检测注入（去自动化指纹）
+│   ├── timer.py
+│   ├── grabber.py
+│   └── mobile_grabber.py
 ├── gui/
-│   ├── worker.py        # 桌面端工作线程
-│   ├── mobile_worker.py # 移动端工作线程
-│   └── main_window.py   # PyQt6 主窗口（模式切换）
+│   ├── main_window.py
+│   ├── mobile_worker.py
+│   └── worker.py
 ├── utils/
-│   └── config.py        # 配置加载/保存
-└── tests/               # 单元测试
+│   └── config.py
+└── inspect_ui.py
 ```
+
+## 注意事项
+
+- 这个工具不能绕过验证码、排队、库存分配和平台风控。
+- OpenCV 模板识别依赖页面样式，页面变化后需要重截模板。
+- 不建议完全无人值守，最好全程盯着手机，必要时手动介入。
+- 支付阶段必须手动完成。
 
 ## 免责声明
 
-本项目仅供学习和个人使用，请遵守大麦网的服务条款。请勿将本工具用于商业倒票或其他违法用途。使用本工具产生的任何后果由用户自行承担。
+本项目仅供学习、研究和个人自动化辅助使用。使用者应自行承担使用风险，并遵守相关平台规则和法律法规。请勿用于商业倒票、批量抢票或其他违规用途。
