@@ -53,6 +53,7 @@ class ScrcpyWindowCapture:
         self._np = None
         self._cv2 = None
         self._started_by_us = False
+        self.last_error_reason = ""
 
     def start(self, on_log: Callable[[str], None]) -> bool:
         if sys.platform != "win32":
@@ -125,24 +126,30 @@ class ScrcpyWindowCapture:
         return False
 
     def grab_bgr(self):
+        self.last_error_reason = ""
         if not self._mss or not self._np or not self._cv2:
+            self.last_error_reason = "mss/cv2/np未初始化"
             return None
 
         if not self.hwnd:
             self.hwnd = self._find_window()
         if not self.hwnd:
+            self.last_error_reason = "未找到scrcpy窗口"
             return None
         if self._is_window_minimized(self.hwnd):
+            self.last_error_reason = "scrcpy窗口已最小化"
             return None
 
         rect = self._client_screen_rect(self.hwnd)
         if not rect:
+            self.last_error_reason = "无法获取scrcpy窗口客户区"
             return None
 
         left, top, right, bottom = rect
         width = right - left
         height = bottom - top
         if width < 120 or height < 240:
+            self.last_error_reason = f"scrcpy窗口客户区过小({width}x{height})"
             return None
 
         try:
@@ -151,9 +158,12 @@ class ScrcpyWindowCapture:
             )
             bgra = self._np.array(frame)
             if self._is_bad_frame(bgra):
+                self.last_error_reason = "截到黑屏/异常暗帧"
                 return None
+            self.last_error_reason = ""
             return self._cv2.cvtColor(bgra, self._cv2.COLOR_BGRA2BGR)
-        except Exception:
+        except Exception as e:
+            self.last_error_reason = f"mss截屏异常: {e}"
             return None
 
     def stop(self) -> None:

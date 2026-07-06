@@ -23,7 +23,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "normal_check_interval": 1.0,
         "fast_check_interval": 0.2,
         "popup_wait_seconds": 0.2,
-        "post_submit_check_seconds": 1.0,
+        "post_submit_check_seconds": 5.0,
         "fallback_popup_taps_enabled": False,
         "fallback_popup_taps": [[0.50, 0.56], [0.50, 0.61]],
         "fallback_popup_after_seconds": 0.45,

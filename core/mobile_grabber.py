@@ -292,9 +292,17 @@ class MobileGrabber:
                     and self.video_stream_fallback_screenshot
                     and not self._screenshot_fallback_logged
                 ):
-                    on_log("scrcpy视频帧暂不可用，OpenCV已回退普通手机截图")
+                    reason = getattr(self._video_capture, "last_error_reason", "") or "未知原因"
+                    on_log(f"scrcpy视频帧暂不可用（原因：{reason}），OpenCV已回退普通手机截图")
                     self._screenshot_fallback_logged = True
-            except Exception:
+            except Exception as e:
+                if (
+                    on_log
+                    and self.video_stream_fallback_screenshot
+                    and not self._screenshot_fallback_logged
+                ):
+                    on_log(f"scrcpy视频帧读取异常（原因：{e}），OpenCV已回退普通手机截图")
+                    self._screenshot_fallback_logged = True
                 if not self.video_stream_fallback_screenshot:
                     return None
         if self._video_enabled_runtime and not self.video_stream_fallback_screenshot:
@@ -386,7 +394,12 @@ class MobileGrabber:
             return screen_gray, 0, 0
         return screen_gray[y1:y2, x1:x2], x1, y1
 
-    def _handle_opencv_buttons(self, device, on_log: Callable[[str], None]) -> str:
+    def _handle_opencv_buttons(
+        self,
+        device,
+        on_log: Callable[[str], None],
+        allow_submit: bool = True,
+    ) -> str:
         if not self.opencv_enabled:
             return "normal"
         if cv2 is None or np is None:
@@ -427,16 +440,17 @@ class MobileGrabber:
                 time.sleep(wait_seconds)
                 return "retry"
 
-        template_path = self.opencv_templates.get("submit", "")
-        matched, x, y, score = self._match_template_gray(screen_gray, template_path, offset_x, offset_y)
-        if matched:
-            on_log(f"OpenCV识别到「立即提交」(score={score:.2f})，已点击")
-            self._cached_try_point = None
-            self._cached_try_until = 0.0
-            self._cached_try_taps = 0
-            self._cached_try_need_verify = False
-            self._tap_points(device, [(x, y)])
-            return "success"
+        if allow_submit:
+            template_path = self.opencv_templates.get("submit", "")
+            matched, x, y, score = self._match_template_gray(screen_gray, template_path, offset_x, offset_y)
+            if matched:
+                on_log(f"OpenCV识别到「立即提交」(score={score:.2f})，已点击")
+                self._cached_try_point = None
+                self._cached_try_until = 0.0
+                self._cached_try_taps = 0
+                self._cached_try_need_verify = False
+                self._tap_points(device, [(x, y)])
+                return "success"
 
         return "normal"
 
@@ -770,7 +784,7 @@ class MobileGrabber:
 
             now = time.time()
             if now - last_opencv_scan >= self.opencv_scan_interval:
-                opencv_state = self._handle_opencv_buttons(device, on_log)
+                opencv_state = self._handle_opencv_buttons(device, on_log, allow_submit=False)
                 last_opencv_scan = now
                 if opencv_state == "manual_pause":
                     state = self._wait_manual_intervention(device, on_log, deadline)
@@ -784,8 +798,8 @@ class MobileGrabber:
                         return "soldout"
                     if state == "retry_fast":
                         return "retry"
-                if opencv_state in ("success", "retry"):
-                    return opencv_state
+                if opencv_state == "retry":
+                    return "retry"
 
             if self._is_visual_fast_mode():
                 time.sleep(0.02)
@@ -845,9 +859,22 @@ class MobileGrabber:
                 log(f"检测到支付界面，总耗时 {elapsed:.0f}ms，脚本已停止防误触")
                 return GrabResult(success=True, message="检测到支付界面，脚本已停止防误触，请手动完成支付", elapsed_ms=elapsed)
             if buy_state == "submitted":
-                elapsed = (time.time() - start) * 1000
-                log(f"OpenCV已点击立即提交，总耗时 {elapsed:.0f}ms，请在手机上完成支付")
-                return GrabResult(success=True, message="抢票成功，请在手机上完成支付", elapsed_ms=elapsed)
+                log("OpenCV已点击立即提交，继续观察是否进入支付或回流")
+                submit_state = self._wait_after_submit(device, log, deadline)
+                if submit_state == "success":
+                    elapsed = (time.time() - start) * 1000
+                    log(f"提交后未检测到回流，总耗时 {elapsed:.0f}ms，请在手机上确认支付状态")
+                    return GrabResult(success=True, message="已点击提交，请在手机上确认支付状态", elapsed_ms=elapsed)
+                if submit_state == "soldout":
+                    elapsed = (time.time() - start) * 1000
+                    return GrabResult(success=False, message="检测到售罄/暂不可售，已停止", elapsed_ms=elapsed)
+                if submit_state == "stopped":
+                    elapsed = (time.time() - start) * 1000
+                    return GrabResult(success=False, message="用户手动停止", elapsed_ms=elapsed)
+
+                log("提交后遇到继续尝试/刷新提示，继续回流尝试")
+                round_no += 1
+                continue
             if buy_state != "order":
                 round_no += 1
                 continue
