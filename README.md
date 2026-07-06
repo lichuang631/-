@@ -91,7 +91,7 @@ Copy-Item config.example.json config.json
 | 参数 | 说明 |
 | --- | --- |
 | `mobile.device_serial` | Android 设备序列号，留空时自动连接默认设备 |
-| `mobile.advance_seconds` | 提前点击秒数，当前建议 `0`，避免提前点到“已预约” |
+| `mobile.advance_seconds` | 提前点击秒数，当前建议 `0.1`，热门票不要等到整点才开始点 |
 | `mobile.max_retries` | 单轮购票点击循环次数 |
 | `mobile.max_run_seconds` | 最大运行时长 |
 | `mobile.opencv_match_scale` | OpenCV 降采样匹配比例，默认 `0.6` |
@@ -124,6 +124,7 @@ Copy-Item config.example.json config.json
 - scrcpy 窗口会置顶，抢票时不要遮挡它。
 - 如果日志出现“已回退普通手机截图”，说明视频帧不可用，但脚本仍会继续按原方案运行。
 - 如果视频流识别不稳定，把 `video_stream_enabled` 改回 `false` 即可恢复原模式。
+- 每次移动端抢票会在 `runs/时间戳/` 保存 `run.log`、`screen.mp4` 和 `config_snapshot.json`，方便失败后按视频和日志复盘；不要上传这些包含个人画面的文件。
 
 ## 模板图片
 

@@ -1,11 +1,14 @@
 import time
 from datetime import datetime
+from pathlib import Path
+import shutil
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.timer import NTPTimer
 from core.mobile_grabber import MobileDevice, MobileGrabber, GrabResult
+from core.run_recorder import RunRecorder
 
 
 class MobileGrabWorker(QThread):
@@ -29,26 +32,84 @@ class MobileGrabWorker(QThread):
         self.ntp_timeout = ntp_timeout
         self.grab_config = grab_config
         self._stop_flag = False
+        self.run_dir: Optional[Path] = None
+        self.log_path: Optional[Path] = None
+        try:
+            self.run_dir = Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            self.log_path = self.run_dir / "run.log"
+            self._cleanup_old_runs()
+        except Exception:
+            self.run_dir = None
+            self.log_path = None
+
+    def _cleanup_old_runs(self) -> None:
+        keep_runs = int(self.grab_config.get("recording_keep_runs", 10))
+        if keep_runs <= 0:
+            return
+        root = Path("runs")
+        if not root.exists():
+            return
+        run_dirs = [
+            item
+            for item in root.iterdir()
+            if item.is_dir() and item.name != self.run_dir.name
+        ]
+        run_dirs.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+        for old_dir in run_dirs[max(0, keep_runs - 1):]:
+            try:
+                shutil.rmtree(old_dir)
+            except Exception:
+                pass
+
+    def _log(self, message: str) -> None:
+        self.log_message.emit(message)
+        if not self.log_path:
+            return
+        try:
+            ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            with self.log_path.open("a", encoding="utf-8") as f:
+                f.write(f"[{ts}] {message}\n")
+        except Exception:
+            pass
 
     def run(self):
         try:
             self._execute()
         except Exception as e:
+            self._log(f"异常: {e}")
             self.grab_finished.emit(False, f"异常: {e}")
 
     def _execute(self):
-        self.log_message.emit("抢票模式: 移动端(APP)")
+        self._log("抢票模式: 移动端(APP)")
+        if self.log_path:
+            self._log(f"运行日志已保存: {self.log_path.resolve()}")
+
+        recorder = None
+        if self.run_dir:
+            recorder = RunRecorder(
+                self.run_dir,
+                enabled=self.grab_config.get("recording_enabled", True),
+                fps=self.grab_config.get("recording_fps", 10),
+                max_width=self.grab_config.get("recording_max_width", 720),
+                queue_size=self.grab_config.get("recording_queue_size", 60),
+            )
+            recorder.save_config_snapshot(self.grab_config)
+            if recorder.start():
+                self._log(f"复盘录像已开启: {recorder.video_path.resolve()}")
+            else:
+                self._log("复盘录像未开启或OpenCV不可用，仅保存运行日志")
 
         self.status_changed.emit("正在同步NTP时间...")
         timer = NTPTimer(servers=self.ntp_servers, timeout=self.ntp_timeout)
         offset = timer.sync()
         if offset == 0.0 and self.ntp_servers:
-            self.log_message.emit("警告: NTP校时失败，使用本地时间")
+            self._log("警告: NTP校时失败，使用本地时间")
         else:
-            self.log_message.emit(f"NTP校时完成，偏移量: {offset*1000:.1f}ms")
+            self._log(f"NTP校时完成，偏移量: {offset*1000:.1f}ms")
 
         self.status_changed.emit("正在连接手机...")
-        self.log_message.emit("正在连接手机...")
+        self._log("正在连接手机...")
         mobile = MobileDevice()
         connect_retries = self.grab_config.get("connect_retries", 3)
         connect_retry_delay = self.grab_config.get("connect_retry_delay", 0.5)
@@ -63,26 +124,26 @@ class MobileGrabWorker(QThread):
                 break
             except Exception as e:
                 last_error = e
-                self.log_message.emit(f"连接失败({attempt + 1}/{connect_retries}): {e}")
+                self._log(f"连接失败({attempt + 1}/{connect_retries}): {e}")
                 if attempt + 1 < connect_retries:
                     time.sleep(connect_retry_delay)
 
         if last_error is not None:
-            self.log_message.emit("请检查:")
-            self.log_message.emit("  1. 手机已通过 USB 数据线连接电脑")
-            self.log_message.emit("  2. 手机已开启 USB 调试（开发者选项中）")
-            self.log_message.emit("  3. 手机弹窗已点击「允许 USB 调试」")
+            self._log("请检查:")
+            self._log("  1. 手机已通过 USB 数据线连接电脑")
+            self._log("  2. 手机已开启 USB 调试（开发者选项中）")
+            self._log("  3. 手机弹窗已点击「允许 USB 调试」")
             self.grab_finished.emit(False, f"手机连接失败: {last_error}")
             return
 
         w, h = mobile.window_size()
         info_name = mobile.device.info.get("productName", "Unknown")
-        self.log_message.emit(f"已连接: {info_name} ({w}×{h})")
+        self._log(f"已连接: {info_name} ({w}×{h})")
 
         if mobile.check_damai_foreground():
-            self.log_message.emit("大麦APP已在前台")
+            self._log("大麦APP已在前台")
         else:
-            self.log_message.emit("警告: 当前前台不是大麦APP，请手动切换")
+            self._log("警告: 当前前台不是大麦APP，请手动切换")
 
         grabber = MobileGrabber(
             max_retries=self.grab_config.get("max_retries", 20),
@@ -137,9 +198,10 @@ class MobileGrabWorker(QThread):
             },
             ticket_confirm_pos=tuple(self.grab_config.get("ticket_confirm_pos", [0.78, 0.92])),
             ticket_select_wait_seconds=self.grab_config.get("ticket_select_wait_seconds", 0.35),
+            run_recorder=recorder,
             should_stop=lambda: self._stop_flag,
         )
-        grabber.prepare_video_stream(lambda msg: self.log_message.emit(msg))
+        grabber.prepare_video_stream(lambda msg: self._log(msg))
 
         advance = self.grab_config.get("advance_seconds", 0.5)
 
@@ -156,19 +218,23 @@ class MobileGrabWorker(QThread):
 
         if self._stop_flag:
             grabber.close_video_stream()
+            if recorder:
+                recorder.stop()
             self.grab_finished.emit(False, "用户手动停止")
             return
 
         if advance > 0:
-            self.log_message.emit(f"提前 {advance} 秒开始点击")
+            self._log(f"提前 {advance} 秒开始点击")
 
         self.status_changed.emit("抢票中...")
         try:
             result: GrabResult = grabber.run(
-                mobile.device, on_log=lambda msg: self.log_message.emit(msg)
+                mobile.device, on_log=lambda msg: self._log(msg)
             )
         finally:
             grabber.close_video_stream()
+            if recorder:
+                recorder.stop()
 
         self.grab_finished.emit(result.success, result.message)
 

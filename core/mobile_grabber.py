@@ -13,6 +13,7 @@ except ImportError:
     np = None
 
 from core.grabber import GrabResult
+from core.run_recorder import RunRecorder
 from core.scrcpy_capture import ScrcpyWindowCapture
 
 _BUY_BUTTON_TEXTS = ["立即抢购", "立即购买", "立即预订", "选座购买", "确定"]
@@ -108,6 +109,7 @@ class MobileGrabber:
         ticket_positions: Optional[dict[str, tuple[float, float]]] = None,
         ticket_confirm_pos: tuple[float, float] = (0.78, 0.92),
         ticket_select_wait_seconds: float = 0.35,
+        run_recorder: Optional[RunRecorder] = None,
         should_stop: Optional[Callable[[], bool]] = None,
     ):
         self.max_retries = max_retries
@@ -168,6 +170,7 @@ class MobileGrabber:
         self.ticket_positions = ticket_positions or _DEFAULT_TICKET_POSITIONS
         self.ticket_confirm_pos = ticket_confirm_pos
         self.ticket_select_wait_seconds = ticket_select_wait_seconds
+        self.run_recorder = run_recorder
         self.should_stop = should_stop or (lambda: False)
 
     def prepare_video_stream(self, on_log: Callable[[str], None]) -> None:
@@ -286,6 +289,8 @@ class MobileGrabber:
                     if on_log and not self._video_source_logged:
                         on_log("OpenCV识别使用 scrcpy 视频窗口帧")
                         self._video_source_logged = True
+                    if self.run_recorder:
+                        self.run_recorder.record_frame(frame)
                     return frame
                 if (
                     on_log
@@ -311,7 +316,10 @@ class MobileGrabber:
             image = device.screenshot()
             rgb = np.array(image.convert("RGB"))
             self._screen_to_device_scale = (1.0, 1.0)
-            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            if self.run_recorder:
+                self.run_recorder.record_frame(frame)
+            return frame
         except Exception:
             return None
 
@@ -413,15 +421,23 @@ class MobileGrabber:
             return "normal"
         screen_gray, offset_x, offset_y = self._opencv_scan_gray(screen)
 
-        for label, template_key in [
-            ("验证提示", "verify_title"),
-            ("滑块验证", "verify_slider"),
-        ]:
-            template_path = self.opencv_templates.get(template_key, "")
-            matched, _, _, score = self._match_template_gray(screen_gray, template_path, offset_x, offset_y)
-            if matched:
-                on_log(f"OpenCV识别到「{label}」(score={score:.2f})，暂停自动点击")
-                return "manual_pause"
+        verify_title_path = self.opencv_templates.get("verify_title", "")
+        verify_slider_path = self.opencv_templates.get("verify_slider", "")
+        title_matched, _, _, title_score = self._match_template_gray(
+            screen_gray, verify_title_path, offset_x, offset_y
+        )
+        slider_matched, _, _, slider_score = self._match_template_gray(
+            screen_gray, verify_slider_path, offset_x, offset_y
+        )
+        if title_matched:
+            if slider_matched:
+                on_log(
+                    f"OpenCV识别到「验证提示+滑块验证」"
+                    f"(title={title_score:.2f}, slider={slider_score:.2f})，暂停自动点击"
+                )
+            else:
+                on_log(f"OpenCV识别到「验证提示」(score={title_score:.2f})，暂停自动点击")
+            return "manual_pause"
 
         for label, template_key, wait_seconds in [
             ("努力刷新", "refresh", self.opencv_refresh_wait_seconds),
@@ -506,12 +522,9 @@ class MobileGrabber:
         if screen is None:
             return False
         screen_gray, offset_x, offset_y = self._opencv_scan_gray(screen)
-        for template_key in ["verify_title", "verify_slider"]:
-            template_path = self.opencv_templates.get(template_key, "")
-            matched, _, _, _ = self._match_template_gray(screen_gray, template_path, offset_x, offset_y)
-            if matched:
-                return True
-        return False
+        template_path = self.opencv_templates.get("verify_title", "")
+        matched, _, _, _ = self._match_template_gray(screen_gray, template_path, offset_x, offset_y)
+        return matched
 
     def _wait_manual_intervention(self, device, on_log: Callable[[str], None], deadline: float) -> str:
         self._cached_try_point = None
@@ -773,33 +786,41 @@ class MobileGrabber:
         wait_start = time.time()
         fallback_tapped = False
         last_opencv_scan = 0.0
+        submit_retry_count = 0
+        submit_retry_max = max(1, int(self.post_submit_check_seconds / max(self.opencv_scan_interval, 0.02)))
         while time.time() < end_at:
             if self.should_stop():
                 return "stopped"
             if not self._is_visual_fast_mode():
                 if self._is_payment_page(device):
                     return "success"
-                if self._is_order_page(device):
-                    return "success"
 
             now = time.time()
             if now - last_opencv_scan >= self.opencv_scan_interval:
-                opencv_state = self._handle_opencv_buttons(device, on_log, allow_submit=False)
+                allow_submit_retry = submit_retry_count < submit_retry_max
+                opencv_state = self._handle_opencv_buttons(
+                    device,
+                    on_log,
+                    allow_submit=allow_submit_retry,
+                )
                 last_opencv_scan = now
                 if opencv_state == "manual_pause":
                     state = self._wait_manual_intervention(device, on_log, deadline)
                     if state == "payment":
                         return "success"
                     if state == "order":
-                        return "success"
+                        continue
                     if state in ("stopped", "timeout"):
                         return state
                     if state == "soldout":
                         return "soldout"
                     if state == "retry_fast":
-                        return "retry"
+                        continue
                 if opencv_state == "retry":
-                    return "retry"
+                    continue
+                if opencv_state == "success":
+                    submit_retry_count += 1
+                    continue
 
             if self._is_visual_fast_mode():
                 time.sleep(0.02)
@@ -811,13 +832,13 @@ class MobileGrabber:
             if state == "payment":
                 return "success"
             if state == "order":
-                return "success"
+                continue
             if state in ("stopped", "timeout"):
                 return state
             if state == "soldout":
                 return "soldout"
             if state == "retry_fast":
-                return "retry"
+                continue
 
             if (
                 self.fallback_popup_taps_enabled
@@ -828,9 +849,19 @@ class MobileGrabber:
                 on_log("未读到弹窗文字，已尝试点击常见弹窗按钮位置兜底")
                 fallback_tapped = True
                 time.sleep(self.popup_wait_seconds)
-                return "retry"
+                continue
             time.sleep(0.05)
-        return "success"
+        if self._is_payment_page(device):
+            return "success"
+        try:
+            package_name = device.app_current().get("package", "")
+        except Exception:
+            package_name = ""
+        if "damai" in package_name.lower():
+            on_log("提交后暂未确认进入支付，继续回流尝试，避免验证/弹窗漏识别导致停止")
+            return "retry"
+        on_log("提交后未明确检测到支付界面，继续回流尝试，避免未知页面漏识别导致停止")
+        return "retry"
 
     def run(
         self,
@@ -872,7 +903,7 @@ class MobileGrabber:
                     elapsed = (time.time() - start) * 1000
                     return GrabResult(success=False, message="用户手动停止", elapsed_ms=elapsed)
 
-                log("提交后遇到继续尝试/刷新提示，继续回流尝试")
+                log("提交后未确认支付或遇到回流提示，继续回流尝试")
                 round_no += 1
                 continue
             if buy_state != "order":
@@ -895,7 +926,7 @@ class MobileGrabber:
                 elapsed = (time.time() - start) * 1000
                 return GrabResult(success=False, message="用户手动停止", elapsed_ms=elapsed)
 
-            log("提交后遇到弹窗/库存提示，继续回流尝试")
+            log("提交后未确认支付或遇到弹窗/库存提示，继续回流尝试")
             round_no += 1
 
         elapsed = (time.time() - start) * 1000

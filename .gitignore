@@ -32,6 +32,8 @@ Thumbs.db
 
 # Local runtime config
 config.json
+runs/
+logs/
 
 # Local screenshots, button captures, and debug artifacts
 *.png
