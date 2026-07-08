@@ -74,6 +74,8 @@ class MobileGrabber:
         click_interval_ms: int = 50,
         confirm_clicks: int = 10,
         max_run_seconds: float = 180,
+        buy_button_pos: tuple[float, float] = _FALLBACK_BUY_POS,
+        confirm_button_pos: tuple[float, float] = _FALLBACK_CONFIRM_POS,
         normal_check_interval: float = 1.0,
         fast_check_interval: float = 0.2,
         popup_wait_seconds: float = 0.2,
@@ -116,6 +118,8 @@ class MobileGrabber:
         self.click_interval_ms = click_interval_ms
         self.confirm_clicks = confirm_clicks
         self.max_run_seconds = max_run_seconds
+        self.buy_button_pos = buy_button_pos
+        self.confirm_button_pos = confirm_button_pos
         self.normal_check_interval = normal_check_interval
         self.fast_check_interval = fast_check_interval
         self.popup_wait_seconds = popup_wait_seconds
@@ -647,7 +651,7 @@ class MobileGrabber:
 
     def click_buy(self, device, on_log: Callable[[str], None], deadline: float) -> str:
         w, h = self._get_device_window_size(device)
-        fx, fy = _FALLBACK_BUY_POS
+        fx, fy = self.buy_button_pos
         check_gap = self.normal_check_interval
         last_check = 0.0
         detect_enabled_at = time.time() + self.opencv_start_delay_seconds
@@ -773,7 +777,7 @@ class MobileGrabber:
 
     def confirm_order(self, device, on_log: Callable[[str], None]) -> bool:
         w, h = self._get_device_window_size(device)
-        fx, fy = _FALLBACK_CONFIRM_POS
+        fx, fy = self.confirm_button_pos
         points = [
             self._jittered_pos(w, h, fx, fy)
             for _ in range(self.confirm_clicks)

@@ -37,6 +37,11 @@ logs/
 
 # Local screenshots, button captures, and debug artifacts
 *.png
+!btn_refresh.png
+!btn_try.png
+!btn_submit.png
+!btn_verify_title.png
+!btn_verify_slider.png
 *.jpg
 *.jpeg
 *.webp

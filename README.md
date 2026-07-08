@@ -38,8 +38,14 @@
 克隆仓库：
 
 ```bash
-git clone https://gitee.com/lichuang-c/damai-ticket-grabbing-script.git
+git clone https://github.com/lichuang631/-.git damai-ticket-grabbing-script
 cd damai-ticket-grabbing-script
+```
+
+也可以使用 Gitee 镜像：
+
+```bash
+git clone https://gitee.com/lichuang-c/damai-ticket-grabbing-script.git damai-ticket-grabbing-script
 ```
 
 Windows 推荐直接运行：
@@ -64,7 +70,7 @@ pip install -r requirements.txt
 
 1. 克隆项目并安装依赖。
 2. 复制 `config.example.json` 为 `config.json`。
-3. 准备三张模板图：`btn_refresh.png`、`btn_try.png`、`btn_submit.png`。
+3. 默认模板图已随仓库提供；如果识别不准，再重新裁剪替换 `btn_*.png`。
 4. 手机打开 USB 调试，用数据线连接电脑。
 5. 运行 `python inspect_ui.py`，确认手机能被识别。
 6. 运行 `python main.py` 或双击 `start.bat`。
@@ -92,6 +98,8 @@ Copy-Item config.example.json config.json
 | --- | --- |
 | `mobile.device_serial` | Android 设备序列号，留空时自动连接默认设备 |
 | `mobile.advance_seconds` | 提前点击秒数，当前建议 `0.1`，热门票不要等到整点才开始点 |
+| `mobile.buy_button_pos` | 底部购票/预约按钮兜底坐标，使用屏幕相对比例 `[x, y]` |
+| `mobile.confirm_button_pos` | 提交订单页兜底提交坐标，使用屏幕相对比例 `[x, y]` |
 | `mobile.max_retries` | 单轮购票点击循环次数 |
 | `mobile.max_run_seconds` | 最大运行时长 |
 | `mobile.opencv_match_scale` | OpenCV 降采样匹配比例，默认 `0.6` |
@@ -103,6 +111,8 @@ Copy-Item config.example.json config.json
 | `mobile.video_stream_enabled` | 是否启用 scrcpy 投屏窗口作为 OpenCV 画面源 |
 | `mobile.scrcpy_path` | `scrcpy.exe` 的绝对路径 |
 | `mobile.video_stream_fallback_screenshot` | 视频帧不可用时是否自动回退普通截图 |
+| `mobile.recording_enabled` | 是否保存每次运行的复盘视频和日志 |
+| `mobile.recording_keep_runs` | 自动保留最近几次复盘，默认 `10` |
 
 ### 可选：scrcpy 视频流识别
 
@@ -120,15 +130,17 @@ Copy-Item config.example.json config.json
 
 使用建议：
 
+- Windows 用户可从 [scrcpy releases](https://github.com/Genymobile/scrcpy/releases) 下载压缩包，解压后把 `scrcpy.exe` 的完整路径填到 `mobile.scrcpy_path`。
 - 开票前先确认 `adb devices` 能看到手机。
-- scrcpy 窗口会置顶，抢票时不要遮挡它。
+- scrcpy 窗口会置顶，抢票时不要最小化、不要遮挡它；窗口被遮挡、最小化或支付页黑屏时，脚本会回退普通手机截图。
+- 支付宝/支付安全页可能在 scrcpy 里显示黑屏，这是正常的安全策略；脚本检测到支付页后会停止，支付请手动完成。
 - 如果日志出现“已回退普通手机截图”，说明视频帧不可用，但脚本仍会继续按原方案运行。
 - 如果视频流识别不稳定，把 `video_stream_enabled` 改回 `false` 即可恢复原模式。
 - 每次移动端抢票会在 `runs/时间戳/` 保存 `run.log`、`screen.mp4` 和 `config_snapshot.json`，方便失败后按视频和日志复盘；不要上传这些包含个人画面的文件。
 
 ## 模板图片
 
-移动端 OpenCV 识别需要在项目根目录放置三张按钮模板图：
+仓库已提供一套默认 OpenCV 模板图，放在项目根目录：
 
 ```text
 btn_refresh.png  努力刷新
@@ -144,6 +156,35 @@ btn_verify_slider.png  滑块验证区域
 - 不要带太多背景。
 - 尽量使用和实战手机同分辨率、同主题下的截图。
 - 如果大麦页面样式变化，模板可能需要重新截。
+- 前三张按钮模板最关键；验证码模板只作为暂停提醒辅助，识别不准时建议重新裁 `btn_verify_title.png`。
+
+## 不同手机适配
+
+本工具入口点击使用相对坐标，不是固定像素。默认：
+
+```json
+{
+  "mobile": {
+    "buy_button_pos": [0.63, 0.94],
+    "confirm_button_pos": [0.80, 0.92]
+  }
+}
+```
+
+含义：
+
+- `x=0.50` 是屏幕横向中间，`x` 越大越靠右。
+- `y=0.94` 是屏幕底部附近，`y` 越大越靠下。
+- 大多数普通安卓手机底部购票按钮位置接近默认值，可以先不改。
+
+如果测试时点偏：
+
+- 点到按钮左边：把 `buy_button_pos[0]` 调大一点，如 `0.68`。
+- 点到按钮右边：把 `buy_button_pos[0]` 调小一点，如 `0.55`。
+- 点得太低：把 `buy_button_pos[1]` 调小一点，如 `0.91`。
+- 点得太高：把 `buy_button_pos[1]` 调大一点，如 `0.96`。
+
+建议正式抢票前先设置一个当前时间 +60 秒的测试任务，观察手机是否能点到底部购票/预约按钮。折叠屏、平板、虚拟导航栏、字体显示很大的手机，可能需要微调坐标或重新裁模板。
 
 ## 启动
 
@@ -186,9 +227,12 @@ python main.py
 短时间内优先点缓存坐标
 每点几次后截图校验
 识别到努力刷新 -> 点击并短等待
-识别到立即提交 -> 点击并结束
+识别到立即提交 -> 进入提交后观察期
+提交后观察期内 -> 持续补点立即提交
+如果出现继续尝试/努力刷新 -> 点击处理后继续补点立即提交
 检测到验证码/安全验证 -> 暂停自动点击，等待人工处理后继续
 检测到支付界面 -> 停止脚本，交给用户付款
+每次运行保存 run.log + screen.mp4，用于失败复盘
 ```
 
 ## 测试手机连接
@@ -208,9 +252,15 @@ python inspect_ui.py
 ├── start.bat
 ├── setup.bat
 ├── config.example.json
+├── btn_refresh.png
+├── btn_try.png
+├── btn_submit.png
+├── btn_verify_title.png
+├── btn_verify_slider.png
 ├── core/
 │   ├── timer.py
 │   ├── grabber.py
+│   ├── run_recorder.py
 │   └── mobile_grabber.py
 ├── gui/
 │   ├── main_window.py

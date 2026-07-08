@@ -150,6 +150,8 @@ class MobileGrabWorker(QThread):
             click_interval_ms=self.grab_config.get("click_interval_ms", 50),
             confirm_clicks=self.grab_config.get("confirm_clicks", 10),
             max_run_seconds=self.grab_config.get("max_run_seconds", 180),
+            buy_button_pos=tuple(self.grab_config.get("buy_button_pos", [0.63, 0.94])),
+            confirm_button_pos=tuple(self.grab_config.get("confirm_button_pos", [0.80, 0.92])),
             normal_check_interval=self.grab_config.get("normal_check_interval", 1.0),
             fast_check_interval=self.grab_config.get("fast_check_interval", 0.2),
             popup_wait_seconds=self.grab_config.get("popup_wait_seconds", 0.2),
