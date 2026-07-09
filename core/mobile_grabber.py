@@ -450,13 +450,22 @@ class MobileGrabber:
             template_path = self.opencv_templates.get(template_key, "")
             matched, x, y, score = self._match_template_gray(screen_gray, template_path, offset_x, offset_y)
             if matched:
+                if template_key == "refresh" and self._is_bottom_action_area(device, y):
+                    continue
                 on_log(f"OpenCV识别到「{label}」(score={score:.2f})，已点击")
                 self._tap_points(device, [(x, y)])
                 if template_key == "try":
-                    self._cached_try_point = (x, y)
-                    self._cached_try_until = time.time() + self.opencv_cached_try_seconds
-                    self._cached_try_taps = 0
-                    self._cached_try_need_verify = False
+                    if self._is_continue_try_context(device):
+                        self._cached_try_point = (x, y)
+                        self._cached_try_until = time.time() + self.opencv_cached_try_seconds
+                        self._cached_try_taps = 0
+                        self._cached_try_need_verify = False
+                    else:
+                        self._cached_try_point = None
+                        self._cached_try_until = 0.0
+                        self._cached_try_taps = 0
+                        self._cached_try_need_verify = False
+                        on_log("当前不在订单/拥挤弹窗上下文，未缓存「继续尝试」坐标，避免误点「努力刷新」")
                 time.sleep(wait_seconds)
                 return "retry"
 
@@ -473,6 +482,22 @@ class MobileGrabber:
                 return "success"
 
         return "normal"
+
+    def _is_bottom_action_area(self, device, y: int) -> bool:
+        try:
+            _, h = self._get_device_window_size(device)
+            return y >= int(h * 0.82)
+        except Exception:
+            return False
+
+    def _is_continue_try_context(self, device) -> bool:
+        """只有在订单页或拥挤弹窗附近，才允许「继续尝试」启用缓存连点。"""
+        try:
+            if self._is_order_page(device):
+                return True
+            return self._exists_any_contains(device, _CROWDED_MARKERS, timeout=0.001)
+        except Exception:
+            return False
 
     def _tap_cached_try_if_available(self, device, on_log: Callable[[str], None]) -> bool:
         if not self._cached_try_point:
@@ -798,6 +823,10 @@ class MobileGrabber:
             if not self._is_visual_fast_mode():
                 if self._is_payment_page(device):
                     return "success"
+
+            if self._tap_cached_try_if_available(device, on_log):
+                if not self._cached_try_need_verify:
+                    continue
 
             now = time.time()
             if now - last_opencv_scan >= self.opencv_scan_interval:
