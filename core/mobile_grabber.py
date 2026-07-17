@@ -97,6 +97,7 @@ class MobileGrabber:
         opencv_cached_try_max_taps: int = 12,
         opencv_cached_try_verify_every: int = 3,
         opencv_start_delay_seconds: float = 0.3,
+        opencv_visual_retry_cooldown_seconds: float = 0.06,
         opencv_roi: tuple[float, float, float, float] = (0.0, 0.20, 1.0, 0.98),
         opencv_templates: Optional[dict[str, str]] = None,
         video_stream_enabled: bool = False,
@@ -142,6 +143,7 @@ class MobileGrabber:
         self.opencv_cached_try_max_taps = opencv_cached_try_max_taps
         self.opencv_cached_try_verify_every = max(1, opencv_cached_try_verify_every)
         self.opencv_start_delay_seconds = opencv_start_delay_seconds
+        self.opencv_visual_retry_cooldown_seconds = max(0.0, opencv_visual_retry_cooldown_seconds)
         self.opencv_roi = opencv_roi
         self.opencv_templates = opencv_templates or {
             "refresh": "btn_refresh.png",
@@ -177,6 +179,8 @@ class MobileGrabber:
         self._foreground_paused = False
         self._flow_phase = "buying"
         self._submit_armed = True
+        self._last_visual_retry_signature: Optional[tuple[str, int, int]] = None
+        self._last_visual_retry_at = 0.0
         self.ticket_priority = ticket_priority or []
         self.ticket_positions = ticket_positions or _DEFAULT_TICKET_POSITIONS
         self.ticket_confirm_pos = ticket_confirm_pos
@@ -235,6 +239,41 @@ class MobileGrabber:
         self._cached_try_taps = 0
         self._cached_try_need_verify = False
 
+    def _clear_visual_retry_cooldown(self) -> None:
+        self._last_visual_retry_signature = None
+        self._last_visual_retry_at = 0.0
+
+    def _restore_buying_phase(self) -> None:
+        self._flow_phase = "buying"
+        self._submit_armed = True
+        self._clear_cached_try()
+        self._clear_visual_retry_cooldown()
+
+    def _mark_post_submit_phase(self) -> None:
+        self._flow_phase = "post_submit"
+        self._submit_armed = False
+        self._clear_cached_try()
+        self._clear_visual_retry_cooldown()
+
+    def _visual_retry_signature(self, template_key: str, x: int, y: int) -> tuple[str, int, int]:
+        return template_key, int(round(x / 8)), int(round(y / 8))
+
+    def _is_visual_retry_on_cooldown(self, template_key: str, x: int, y: int) -> bool:
+        if not self._is_visual_fast_mode() or self.opencv_visual_retry_cooldown_seconds <= 0:
+            return False
+        signature = self._visual_retry_signature(template_key, x, y)
+        now = time.time()
+        return (
+            self._last_visual_retry_signature == signature
+            and now - self._last_visual_retry_at < self.opencv_visual_retry_cooldown_seconds
+        )
+
+    def _record_visual_retry_tap(self, template_key: str, x: int, y: int) -> None:
+        if not self._is_visual_fast_mode() or self.opencv_visual_retry_cooldown_seconds <= 0:
+            return
+        self._last_visual_retry_signature = self._visual_retry_signature(template_key, x, y)
+        self._last_visual_retry_at = time.time()
+
     def _read_foreground_state(self, device, force: bool = False) -> str:
         now = time.time()
         if (
@@ -287,6 +326,7 @@ class MobileGrabber:
                 return "payment"
 
             self._clear_cached_try()
+            self._clear_visual_retry_cooldown()
             if not self._foreground_paused:
                 if state == "unknown":
                     on_log("暂时无法确认前台应用，已暂停自动点击")
@@ -537,14 +577,14 @@ class MobileGrabber:
                 retry_candidates,
                 key=lambda candidate: candidate[0],
             )
+            if self._is_visual_retry_on_cooldown(template_key, x, y):
+                return "retry"
             if not self._tap_points(device, [(x, y)]):
                 return "normal"
             on_log(f"OpenCV识别到「{label}」(score={score:.2f})，已点击")
 
             if template_key == "refresh":
-                self._flow_phase = "buying"
-                self._submit_armed = True
-                self._clear_cached_try()
+                self._restore_buying_phase()
             elif self._flow_phase == "post_submit":
                 self._submit_armed = True
                 if self._is_visual_fast_mode():
@@ -556,6 +596,7 @@ class MobileGrabber:
                     self._cached_try_need_verify = False
             else:
                 self._clear_cached_try()
+            self._record_visual_retry_tap(template_key, x, y)
 
             if not self._is_visual_fast_mode():
                 time.sleep(wait_seconds)
@@ -568,9 +609,7 @@ class MobileGrabber:
                 if not self._tap_points(device, [(x, y)]):
                     return "normal"
                 on_log(f"OpenCV识别到「立即提交」(score={score:.2f})，已点击")
-                self._clear_cached_try()
-                self._flow_phase = "post_submit"
-                self._submit_armed = False
+                self._mark_post_submit_phase()
                 return "success"
 
         return "normal"
@@ -770,7 +809,12 @@ class MobileGrabber:
         fx, fy = self.buy_button_pos
         check_gap = self.normal_check_interval
         last_check = 0.0
-        detect_enabled_at = time.time() + self.opencv_start_delay_seconds
+        detect_delay = (
+            0.0
+            if self._is_visual_fast_mode() and self._flow_phase == "post_submit" and self._submit_armed
+            else self.opencv_start_delay_seconds
+        )
+        detect_enabled_at = time.time() + detect_delay
 
         for _ in range(self.max_retries):
             foreground_state = self._wait_for_safe_foreground(device, on_log, deadline)
@@ -903,9 +947,40 @@ class MobileGrabber:
         ]
         if not self._tap_points(device, points):
             return False
-        self._flow_phase = "post_submit"
-        self._submit_armed = False
+        self._mark_post_submit_phase()
         return True
+
+    def _recover_after_submit_timeout(self, device, on_log: Callable[[str], None], deadline: float) -> str:
+        foreground_state = self._wait_for_safe_foreground(device, on_log, deadline, force=True)
+        if foreground_state == "payment":
+            return "success"
+        if foreground_state in ("stopped", "timeout"):
+            return foreground_state
+
+        state = self._handle_page_state(device, on_log, include_opencv_verify=False)
+        if state == "manual_pause":
+            state = self._wait_manual_intervention(device, on_log, deadline)
+        if state == "payment":
+            return "success"
+        if state in ("stopped", "timeout"):
+            return state
+        if state == "soldout":
+            return "soldout"
+        if state == "order":
+            self._flow_phase = "post_submit"
+            self._submit_armed = True
+            self._clear_cached_try()
+            on_log("提交后仍停留在订单页，已重新允许提交")
+            return "order"
+
+        if state == "ticket":
+            on_log("提交后回到票档页，已恢复购买阶段继续回流")
+        elif state == "retry_fast":
+            on_log("提交后已处理回流提示，恢复购买阶段继续尝试")
+        else:
+            on_log("提交后暂未确认进入支付，已恢复购买阶段继续回流")
+        self._restore_buying_phase()
+        return "retry"
 
     def _wait_after_submit(self, device, on_log: Callable[[str], None], deadline: float) -> str:
         end_at = min(time.time() + self.post_submit_check_seconds, deadline)
@@ -980,17 +1055,7 @@ class MobileGrabber:
                 time.sleep(self.popup_wait_seconds)
                 continue
             time.sleep(0.05)
-        if self._is_payment_page(device):
-            return "success"
-        try:
-            package_name = device.app_current().get("package", "")
-        except Exception:
-            package_name = ""
-        if "damai" in package_name.lower():
-            on_log("提交后暂未确认进入支付，继续回流尝试，避免验证/弹窗漏识别导致停止")
-            return "retry"
-        on_log("提交后未明确检测到支付界面，继续回流尝试，避免未知页面漏识别导致停止")
-        return "retry"
+        return self._recover_after_submit_timeout(device, on_log, deadline)
 
     def run(
         self,
@@ -1001,9 +1066,7 @@ class MobileGrabber:
         start = time.time()
         deadline = start + self.max_run_seconds
 
-        self._flow_phase = "buying"
-        self._submit_armed = True
-        self._clear_cached_try()
+        self._restore_buying_phase()
         self._foreground_state_cache = "unknown"
         self._foreground_checked_at = 0.0
         self._foreground_paused = False
@@ -1049,16 +1112,23 @@ class MobileGrabber:
                 if submit_state == "stopped":
                     elapsed = (time.time() - start) * 1000
                     return GrabResult(success=False, message="用户手动停止", elapsed_ms=elapsed)
+                if submit_state == "timeout":
+                    elapsed = (time.time() - start) * 1000
+                    return GrabResult(success=False, message="达到最大运行时长，已停止", elapsed_ms=elapsed)
+                if submit_state == "order":
+                    log("提交后仍在订单页，准备重新提交")
+                    buy_state = "order"
+                else:
+                    log("提交后未确认支付或遇到回流提示，继续回流尝试")
+                    round_no += 1
+                    continue
 
-                log("提交后未确认支付或遇到回流提示，继续回流尝试")
-                round_no += 1
-                continue
             if buy_state != "order":
                 round_no += 1
                 continue
 
             buy_elapsed = (time.time() - start) * 1000
-            log(f"购买按钮点击成功 (耗时 {buy_elapsed:.0f}ms) — Step 2: 确认订单")
+            log(f"已进入/仍在订单页 (耗时 {buy_elapsed:.0f}ms) — Step 2: 确认订单")
 
             if not self.confirm_order(device, log):
                 foreground_state = self._wait_for_safe_foreground(device, log, deadline, force=True)
@@ -1087,6 +1157,13 @@ class MobileGrabber:
             if submit_state == "stopped":
                 elapsed = (time.time() - start) * 1000
                 return GrabResult(success=False, message="用户手动停止", elapsed_ms=elapsed)
+            if submit_state == "timeout":
+                elapsed = (time.time() - start) * 1000
+                return GrabResult(success=False, message="达到最大运行时长，已停止", elapsed_ms=elapsed)
+            if submit_state == "order":
+                log("提交后仍在订单页，继续回流重新提交")
+                round_no += 1
+                continue
 
             log("提交后未确认支付或遇到弹窗/库存提示，继续回流尝试")
             round_no += 1

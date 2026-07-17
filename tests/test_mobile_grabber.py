@@ -206,6 +206,28 @@ def test_submit_match_disarms_until_retry_button_rearms(opencv_available):
     assert grabber._submit_armed
 
 
+def test_visual_retry_same_candidate_uses_short_cooldown(monkeypatch, opencv_available):
+    clock = FakeClock()
+    monkeypatch.setattr(mobile_grabber_module.time, "time", clock.time)
+    grabber = TemplateGrabber(
+        matches={"try": (True, 200, 800, 0.95)},
+        opencv_visual_retry_cooldown_seconds=0.06,
+    )
+    grabber._video_enabled_runtime = True
+    grabber._flow_phase = "post_submit"
+    device = FakeDevice(package=DAMAI_PACKAGE)
+
+    assert grabber._handle_opencv_buttons(device, lambda _: None) == "retry"
+    assert len(device.shell_calls) == 1
+
+    assert grabber._handle_opencv_buttons(device, lambda _: None) == "retry"
+    assert len(device.shell_calls) == 1
+
+    clock.now += 0.061
+    assert grabber._handle_opencv_buttons(device, lambda _: None) == "retry"
+    assert len(device.shell_calls) == 2
+
+
 def test_post_submit_visual_fast_mode_does_not_blind_tap_buy_button(monkeypatch):
     monkeypatch.setattr(mobile_grabber_module.time, "sleep", lambda _: None)
     grabber = MobileGrabber(max_retries=3, opencv_start_delay_seconds=10.0)
@@ -229,3 +251,68 @@ def test_run_initial_foreground_timeout_reports_elapsed(monkeypatch):
     assert not result.success
     assert result.message == "达到最大运行时长，已停止"
     assert result.elapsed_ms >= 500
+
+
+def test_post_submit_timeout_restores_buying_phase(monkeypatch):
+    class TimeoutRecoverGrabber(MobileGrabber):
+        def _handle_opencv_buttons(self, device, on_log, allow_submit=True):
+            return "normal"
+
+        def _handle_page_state(self, device, on_log, include_opencv_verify=True):
+            return "normal"
+
+        def _is_payment_page(self, device, include_text=True):
+            return False
+
+    clock = FakeClock()
+    monkeypatch.setattr(mobile_grabber_module.time, "time", clock.time)
+    monkeypatch.setattr(mobile_grabber_module.time, "sleep", clock.sleep)
+    grabber = TimeoutRecoverGrabber(
+        post_submit_check_seconds=0.03,
+        opencv_scan_interval=0.01,
+        foreground_check_interval=0.01,
+    )
+    grabber._video_enabled_runtime = True
+    grabber._flow_phase = "post_submit"
+    grabber._submit_armed = False
+    device = FakeDevice(package=DAMAI_PACKAGE)
+
+    state = grabber._wait_after_submit(device, lambda _: None, deadline=clock.time() + 1)
+
+    assert state == "retry"
+    assert grabber._flow_phase == "buying"
+    assert grabber._submit_armed
+
+
+def test_post_submit_timeout_on_order_page_rearms_submit():
+    class OrderRecoverGrabber(MobileGrabber):
+        def _handle_page_state(self, device, on_log, include_opencv_verify=True):
+            return "order"
+
+    grabber = OrderRecoverGrabber()
+    grabber._flow_phase = "post_submit"
+    grabber._submit_armed = False
+    device = FakeDevice(package=DAMAI_PACKAGE)
+
+    state = grabber._recover_after_submit_timeout(device, lambda _: None, deadline=time.time() + 1)
+
+    assert state == "order"
+    assert grabber._flow_phase == "post_submit"
+    assert grabber._submit_armed
+
+
+def test_run_handles_submit_wait_timeout():
+    class TimeoutSubmitGrabber(MobileGrabber):
+        def click_buy(self, device, on_log, deadline):
+            return "submitted"
+
+        def _wait_after_submit(self, device, on_log, deadline):
+            return "timeout"
+
+    grabber = TimeoutSubmitGrabber()
+    device = FakeDevice(package=DAMAI_PACKAGE)
+
+    result = grabber.run(device, lambda _: None)
+
+    assert not result.success
+    assert result.message == "达到最大运行时长，已停止"

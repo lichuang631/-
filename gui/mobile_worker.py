@@ -176,6 +176,7 @@ class MobileGrabWorker(QThread):
             opencv_cached_try_max_taps=self.grab_config.get("opencv_cached_try_max_taps", 12),
             opencv_cached_try_verify_every=self.grab_config.get("opencv_cached_try_verify_every", 3),
             opencv_start_delay_seconds=self.grab_config.get("opencv_start_delay_seconds", 0.3),
+            opencv_visual_retry_cooldown_seconds=self.grab_config.get("opencv_visual_retry_cooldown_seconds", 0.06),
             opencv_roi=tuple(self.grab_config.get("opencv_roi", [0.0, 0.20, 1.0, 0.98])),
             opencv_templates=self.grab_config.get(
                 "opencv_templates",
