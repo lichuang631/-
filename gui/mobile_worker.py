@@ -165,6 +165,7 @@ class MobileGrabWorker(QThread):
             manual_pause_enabled=self.grab_config.get("manual_pause_enabled", True),
             manual_pause_poll_seconds=self.grab_config.get("manual_pause_poll_seconds", 0.2),
             manual_pause_max_seconds=self.grab_config.get("manual_pause_max_seconds", 45.0),
+            foreground_check_interval=self.grab_config.get("foreground_check_interval", 0.2),
             opencv_enabled=self.grab_config.get("opencv_enabled", True),
             opencv_threshold=self.grab_config.get("opencv_threshold", 0.75),
             opencv_match_scale=self.grab_config.get("opencv_match_scale", 0.6),

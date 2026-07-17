@@ -5,7 +5,7 @@
 docs/
 
 # Tests
-tests/
+.pytest_cache/
 
 
 # Python

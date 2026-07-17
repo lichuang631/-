@@ -32,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "manual_pause_enabled": True,
         "manual_pause_poll_seconds": 0.2,
         "manual_pause_max_seconds": 45.0,
+        "foreground_check_interval": 0.2,
         "opencv_enabled": True,
         "opencv_threshold": 0.75,
         "opencv_match_scale": 0.6,

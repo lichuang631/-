@@ -32,6 +32,7 @@ class RunRecorder:
         self._writer = None
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._started_at = 0.0
         self._last_frame_at = 0.0
         self._frame_interval = 1.0 / self.fps
 
@@ -39,6 +40,7 @@ class RunRecorder:
         if not self.enabled:
             return False
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._started_at = time.time()
         self._thread = threading.Thread(target=self._write_loop, name="RunRecorder", daemon=True)
         self._thread.start()
         return True
@@ -60,8 +62,7 @@ class RunRecorder:
         self._last_frame_at = now
 
         try:
-            frame = self._prepare_frame(frame_bgr)
-            self.queue.put_nowait(frame)
+            self.queue.put_nowait((now, frame_bgr))
         except queue.Full:
             # 复盘录像不能影响抢票速度，队列满了直接丢帧。
             pass
@@ -98,13 +99,49 @@ class RunRecorder:
         self._writer = cv2.VideoWriter(str(self.video_path), fourcc, self.fps, (width, height))
         return bool(self._writer and self._writer.isOpened())
 
+    def _add_time_label(self, frame, captured_at: float):
+        try:
+            elapsed = max(0.0, captured_at - self._started_at)
+            label = f"+{elapsed:06.1f}s"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            scale = 0.55
+            thickness = 1
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label,
+                font,
+                scale,
+                thickness,
+            )
+            cv2.rectangle(
+                frame,
+                (6, 6),
+                (18 + text_width, 16 + text_height + baseline),
+                (0, 0, 0),
+                -1,
+            )
+            cv2.putText(
+                frame,
+                label,
+                (12, 12 + text_height),
+                font,
+                scale,
+                (255, 255, 255),
+                thickness,
+                cv2.LINE_AA,
+            )
+        except Exception:
+            pass
+        return frame
+
     def _write_loop(self) -> None:
         while not self._stop_event.is_set() or not self.queue.empty():
             try:
-                frame = self.queue.get(timeout=0.1)
+                captured_at, frame = self.queue.get(timeout=0.1)
             except queue.Empty:
                 continue
             try:
+                frame = self._prepare_frame(frame)
+                frame = self._add_time_label(frame, captured_at)
                 if self._ensure_writer(frame):
                     self._writer.write(frame)
             except Exception:
